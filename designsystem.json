@@ -1,0 +1,53 @@
+{
+  "colors": {
+    "background": "#1A1A1A",
+    "surface": "#2A2A2A",
+    "textPrimary": "#FFFFFF",
+    "textSecondary": "#A0A0A0",
+    "inputBackground": "#2C2C2C",
+    "inputIcon": "#B0B0B0",
+    "buttonRed": "#FF2C2C",
+    "buttonRedHover": "#E02525",
+    "socialGoogle": "#DB4437",
+    "socialApple": "#000000",
+    "socialFacebook": "#1877F2"
+  },
+  "typography": {
+    "heading": {
+      "fontFamily": "Inter",
+      "fontSize": 28,
+      "fontWeight": "700",
+      "lineHeight": 34
+    },
+    "subheading": {
+      "fontFamily": "Inter",
+      "fontSize": 20,
+      "fontWeight": "600",
+      "lineHeight": 26
+    },
+    "body": {
+      "fontFamily": "Inter",
+      "fontSize": 16,
+      "fontWeight": "400",
+      "lineHeight": 22
+    },
+    "caption": {
+      "fontFamily": "Inter",
+      "fontSize": 14,
+      "fontWeight": "400",
+      "lineHeight": 20
+    }
+  },
+  "spacing": {
+    "xs": 4,
+    "sm": 8,
+    "md": 16,
+    "lg": 24,
+    "xl": 32
+  },
+  "radius": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20
+  }
+}

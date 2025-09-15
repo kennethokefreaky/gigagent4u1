@@ -1,0 +1,214 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  /* Design System Colors */
+  --background: #1A1A1A;
+  --surface: #2A2A2A;
+  --text-primary: #FFFFFF;
+  --text-secondary: #A0A0A0;
+  --input-background: #2C2C2C;
+  --input-icon: #B0B0B0;
+  --button-red: #FF2C2C;
+  --button-red-hover: #E02525;
+  --social-google: #DB4437;
+  --social-apple: #000000;
+  --social-facebook: #1877F2;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-input-background: var(--input-background);
+  --color-input-icon: var(--input-icon);
+  --color-button-red: var(--button-red);
+  --color-button-red-hover: var(--button-red-hover);
+  --color-social-google: var(--social-google);
+  --color-social-apple: var(--social-apple);
+  --color-social-facebook: var(--social-facebook);
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, sans-serif;
+  margin: 0;
+  padding: 0;
+}
+
+/* Design System Typography Classes */
+.text-heading {
+  font-family: 'Inter', sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 34px;
+}
+
+.text-subheading {
+  font-family: 'Inter', sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 26px;
+}
+
+.text-body {
+  font-family: 'Inter', sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 22px;
+}
+
+.text-caption {
+  font-family: 'Inter', sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+}
+
+/* Design System Spacing Classes */
+.spacing-xs { margin: 4px; }
+.spacing-sm { margin: 8px; }
+.spacing-md { margin: 16px; }
+.spacing-lg { margin: 24px; }
+.spacing-xl { margin: 32px; }
+
+/* Design System Radius Classes */
+.radius-sm { border-radius: 6px; }
+.radius-md { border-radius: 12px; }
+.radius-lg { border-radius: 20px; }
+
+/* Animation */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 2s ease-in-out;
+}
+
+/* Mobile keyboard handling */
+:root {
+  --vh: 1vh;
+}
+
+@supports (-webkit-touch-callout: none) {
+  /* iOS Safari */
+  .keyboard-safe {
+    height: 100vh;
+    height: -webkit-fill-available;
+  }
+}
+
+/* Android and other mobile browsers */
+@media screen and (max-width: 768px) {
+  .keyboard-safe {
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+  }
+  
+  /* Ensure bottom sheets are above keyboard */
+  .bottom-sheet {
+    max-height: calc(var(--vh, 1vh) * 80);
+    max-height: calc(100vh - 20vh); /* Fallback for browsers without CSS custom properties */
+  }
+  
+  /* Additional mobile-specific adjustments */
+  .bottom-sheet {
+    /* Ensure the sheet doesn't get cut off by keyboard */
+    margin-bottom: env(keyboard-inset-height, 0px);
+    margin-bottom: 0; /* Fallback */
+  }
+}
+
+/* Tablet specific adjustments */
+@media screen and (min-width: 769px) and (max-width: 1024px) {
+  .bottom-sheet {
+    max-height: 70vh;
+  }
+}
+
+/* Enhanced Slider Styles for Height and Weight Modals */
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-track {
+  background: #e5e7eb;
+  height: 12px;
+  border-radius: 6px;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  background: #ef4444;
+  height: 24px;
+  width: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 3px solid #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+}
+
+.slider::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.slider::-moz-range-track {
+  background: #e5e7eb;
+  height: 12px;
+  border-radius: 6px;
+  border: none;
+}
+
+.slider::-moz-range-thumb {
+  background: #ef4444;
+  height: 24px;
+  width: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 3px solid #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+}
+
+.slider::-moz-range-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Mobile and Tablet Optimizations */
+@media (max-width: 768px) {
+  .slider::-webkit-slider-thumb {
+    height: 28px;
+    width: 28px;
+  }
+  
+  .slider::-moz-range-thumb {
+    height: 28px;
+    width: 28px;
+  }
+}
+
+/* Touch-friendly sizing for tablets */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .slider::-webkit-slider-thumb {
+    height: 26px;
+    width: 26px;
+  }
+  
+  .slider::-moz-range-thumb {
+    height: 26px;
+    width: 26px;
+  }
+}
