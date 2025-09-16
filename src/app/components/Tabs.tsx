@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { EventData, getAllEvents, getActiveEvents, getPastEvents } from "../../utils/eventUtils";
+import { EventData, getAllEvents, getAllPostsFromSupabase, getActiveEvents, getPastEvents, getAllTalentUsers } from "../../utils/eventUtils";
 
 type TabType = "My Events" | "Candidates" | "Past Events" | "Events" | "Past Events";
 
@@ -14,6 +14,8 @@ export default function Tabs({ userType }: TabsProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabType>(userType === "promoter" ? "My Events" : "Events");
   const [postedEvents, setPostedEvents] = useState<EventData[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [talentCount, setTalentCount] = useState<number>(0);
 
   // Debug: Log the userType and activeTab
   console.log('Tabs: userType =', userType);
@@ -30,38 +32,118 @@ export default function Tabs({ userType }: TabsProps) {
     setActiveTab(correctActiveTab);
   }, [userType]);
 
+  // Get current user ID and talent count
   useEffect(() => {
-    // Load all posted events using utility function
-    const events = getAllEvents();
-    setPostedEvents(events);
+    const getCurrentUser = async () => {
+      try {
+        const { supabase } = await import('@/lib/supabaseClient');
+        const { data: { user } } = await supabase.auth.getUser();
+        setCurrentUserId(user?.id || null);
+        console.log('Tabs: Current user ID =', user?.id);
+      } catch (error) {
+        console.error('Error getting current user:', error);
+        setCurrentUserId(null);
+      }
+    };
+    
+    const loadTalentCount = async () => {
+      try {
+        const talents = await getAllTalentUsers();
+        setTalentCount(talents.length);
+        console.log('Tabs: Talent count =', talents.length);
+      } catch (error) {
+        console.error('Error loading talent count:', error);
+        setTalentCount(0);
+      }
+    };
+    
+    getCurrentUser();
+    loadTalentCount();
   }, []);
 
-  // Listen for filter changes
   useEffect(() => {
-    const handleStorageChange = () => {
-      const events = getAllEvents();
-      setPostedEvents(events);
+    // Load all posted events from Supabase
+    const loadEvents = async () => {
+      try {
+        const supabaseEvents = await getAllPostsFromSupabase();
+        const sessionEvents = getAllEvents(); // Fallback to sessionStorage
+        
+        // Combine both sources, prioritizing Supabase
+        const allEvents = [...supabaseEvents, ...sessionEvents];
+        setPostedEvents(allEvents);
+      } catch (error) {
+        console.error('Error loading events:', error);
+        // Fallback to sessionStorage only
+        const events = getAllEvents();
+        setPostedEvents(events);
+      }
+    };
+    
+    loadEvents();
+  }, []);
+
+  // Listen for filter changes and post updates
+  useEffect(() => {
+    const handleStorageChange = async () => {
+      try {
+        const supabaseEvents = await getAllPostsFromSupabase();
+        const sessionEvents = getAllEvents();
+        const allEvents = [...supabaseEvents, ...sessionEvents];
+        setPostedEvents(allEvents);
+      } catch (error) {
+        console.error('Error reloading events:', error);
+        const events = getAllEvents();
+        setPostedEvents(events);
+      }
     };
 
     window.addEventListener('storage', handleStorageChange);
     // Also listen for custom events (when filters are applied from same tab)
     window.addEventListener('filtersApplied', handleStorageChange);
+    // Listen for new posts
+    window.addEventListener('postCreated', handleStorageChange);
 
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('filtersApplied', handleStorageChange);
+      window.removeEventListener('postCreated', handleStorageChange);
     };
   }, []);
+
+  // Filter events based on user type and current user
+  const getFilteredEventsByUser = () => {
+    if (typeof window === 'undefined') return postedEvents;
+    
+    // For promoters: show only their own posts
+    if (userType === "promoter" && currentUserId) {
+      return postedEvents.filter(event => 
+        event.promoterId === currentUserId
+      );
+    }
+    
+    // For talents: show all posts from all promoters
+    if (userType === "talent") {
+      return postedEvents.filter(event => 
+        event.promoterId // Only show events that have a promoterId (from Supabase)
+      );
+    }
+    
+    // Fallback: return all events
+    return postedEvents;
+  };
 
   // Apply filters to events
   const getFilteredEvents = () => {
     if (typeof window === 'undefined') return postedEvents;
+    
+    // First filter by user type
+    let filtered = getFilteredEventsByUser();
+    
     const savedFilters = sessionStorage.getItem('eventFilters');
-    if (!savedFilters) return postedEvents;
+    if (!savedFilters) return filtered;
 
     try {
       const filters = JSON.parse(savedFilters);
-      let filtered = postedEvents;
 
       // Filter by categories
       if (filters.categories && filters.categories.length > 0) {
@@ -252,15 +334,36 @@ export default function Tabs({ userType }: TabsProps) {
           );
         }
       case "Candidates":
-        return (
-          <div className="flex flex-col items-center justify-center py-16">
-            <svg className="w-16 h-16 text-text-secondary mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
-            <h3 className="text-text-primary font-bold text-lg mb-2">No candidates yet</h3>
-            <p className="text-text-secondary text-sm text-center">Invite talent to see candidates here.</p>
-          </div>
-        );
+        if (talentCount > 0) {
+          return (
+            <div className="flex flex-col items-center justify-center py-16">
+              <svg className="w-16 h-16 text-text-secondary mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              <h3 className="text-text-primary font-bold text-lg mb-2">Find and Accept Talent</h3>
+              <p className="text-text-secondary text-sm text-center mb-2">
+                {talentCount} talent{talentCount > 1 ? 's' : ''} available
+              </p>
+              <p className="text-text-secondary text-sm text-center mb-6">Browse available talent and accept them for your events.</p>
+              <button
+                onClick={() => router.push("/promotertalentlist")}
+                className="bg-button-red hover:bg-button-red-hover text-white px-6 py-3 rounded-xl font-semibold transition-colors"
+              >
+                Browse Talent
+              </button>
+            </div>
+          );
+        } else {
+          return (
+            <div className="flex flex-col items-center justify-center py-16">
+              <svg className="w-16 h-16 text-text-secondary mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              <h3 className="text-text-primary font-bold text-lg mb-2">No Talent Available</h3>
+              <p className="text-text-secondary text-sm text-center mb-6">No talent has signed up yet. Check back later for available candidates.</p>
+            </div>
+          );
+        }
       case "Past Events":
         const filteredPastEvents = getFilteredEvents().filter(event => event.status === 'completed' || event.status === 'cancelled');
         if (filteredPastEvents.length > 0) {

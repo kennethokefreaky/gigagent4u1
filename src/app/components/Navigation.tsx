@@ -10,36 +10,42 @@ export default function Navigation() {
   const { unreadCount } = useNotifications();
   const [needsVerification, setNeedsVerification] = useState(false);
 
-  // SIMPLE LOGIC: Show badge for fighting sports talents who skipped verification
+  // Check for verification requirements from Supabase
   useEffect(() => {
-    const userType = localStorage.getItem('userType');
-    const talentCategories = localStorage.getItem('talentCategories');
-    const verificationSkipped = localStorage.getItem('verificationSkipped');
-    
-    console.log('Navigation: userType =', userType);
-    console.log('Navigation: talentCategories =', talentCategories);
-    console.log('Navigation: verificationSkipped =', verificationSkipped);
-    
-    // Check if user is a fighting sports talent who skipped verification
-    if (userType === "talent" && talentCategories && verificationSkipped === 'true') {
+    const checkVerificationStatus = async () => {
       try {
-        const categories = JSON.parse(talentCategories);
-        const fightingSports = ['Boxer', 'MMA', 'Wrestler'];
-        const hasFightingSports = categories.some((cat: string) => fightingSports.includes(cat));
+        const { supabase } = await import('@/lib/supabaseClient');
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
         
-        console.log('Navigation: categories =', categories);
-        console.log('Navigation: hasFightingSports =', hasFightingSports);
-        
-        if (hasFightingSports) {
-          console.log('Navigation: Setting badge to true');
-          setNeedsVerification(true);
+        if (authError || !user) {
+          return;
+        }
+
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('role, talent_categories, verification_status')
+          .eq('id', user.id)
+          .single();
+
+        if (profileError || !profile) {
+          return;
+        }
+
+        // Check if user is a fighting sports talent who skipped verification
+        if (profile.role === "talent" && profile.talent_categories && profile.verification_status === 'skipped') {
+          const fightingSports = ['Boxer', 'MMA', 'Wrestler'];
+          const hasFightingSports = profile.talent_categories.some((cat: string) => fightingSports.includes(cat));
+          
+          if (hasFightingSports) {
+            setNeedsVerification(true);
+          }
         }
       } catch (error) {
-        console.error('Error parsing talent categories:', error);
+        console.error('Error checking verification status:', error);
       }
-    } else {
-      console.log('Navigation: Conditions not met for badge');
-    }
+    };
+
+    checkVerificationStatus();
   }, []);
 
 

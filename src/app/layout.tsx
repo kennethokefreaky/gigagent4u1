@@ -12,6 +12,7 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "GA4U - GigAgent4U",
   description: "Your gateway to freelance opportunities",
+  viewport: "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no",
 };
 
 export default function RootLayout({

@@ -2,57 +2,76 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useKeyboardVisibility } from "@/hooks/useKeyboardVisibility";
 import Navigation from "../components/Navigation";
 import { Snackbar, Alert, Slide, SlideProps, Dialog, DialogContent, IconButton } from "@mui/material";
 import { Close as CloseIcon, Search as SearchIcon } from "@mui/icons-material";
 
 export default function EditProfilePage() {
   const router = useRouter();
+  const isKeyboardVisible = useKeyboardVisibility();
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [formData, setFormData] = useState({
-    fullName: "Ryusuke",
-    bio: "Professional event promoter with 5+ years of experience in organizing memorable events.",
+    fullName: "",
+    bio: "",
     achievements: [],
     socialLinks: [],
     boxingWeightClass: "",
     mmaWeightClass: "",
     height: "",
-    weight: ""
+    weight: "",
+    phoneNumber: ""
   });
 
-  // Load saved data from localStorage on component mount
+  // Load profile data from Supabase on component mount
   useEffect(() => {
-    const savedProfile = localStorage.getItem('userProfile');
-    if (savedProfile) {
-      const parsedData = JSON.parse(savedProfile);
-      setFormData({
-        fullName: parsedData.fullName || "Ryusuke",
-        bio: parsedData.bio || "Professional event promoter with 5+ years of experience in organizing memorable events.",
-        achievements: parsedData.achievements || [],
-        socialLinks: parsedData.socialLinks || [],
-        boxingWeightClass: parsedData.boxingWeightClass || "",
-        mmaWeightClass: parsedData.mmaWeightClass || "",
-        height: parsedData.height || "",
-        weight: parsedData.weight || ""
-      });
-      if (parsedData.profileImage) {
-        setProfileImage(parsedData.profileImage);
-      }
-    }
-
-    // Get user type
-    const storedUserType = localStorage.getItem('userType');
-    if (storedUserType) {
-      setUserType(storedUserType);
-    }
-
-    // Check if user is a fighting sport athlete
-    const storedTalentCategories = localStorage.getItem('talentCategories');
-    if (storedTalentCategories) {
+    const loadProfileData = async () => {
       try {
-        const categories = JSON.parse(storedTalentCategories);
+        const { supabase } = await import('@/lib/supabaseClient');
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        
+        if (authError || !user) {
+          console.error('Error getting user:', authError);
+          return;
+        }
+
+        // Load profile data from Supabase
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+
+        if (profileError) {
+          console.error('Error loading profile:', profileError);
+          return;
+        }
+
+        // Set form data with Supabase data (empty strings for blank fields)
+        setFormData({
+          fullName: profile.full_name || "",
+          bio: profile.bio || "",
+          achievements: profile.achievements || [],
+          socialLinks: profile.social_links || [],
+          boxingWeightClass: profile.boxing_weight_class || "",
+          mmaWeightClass: profile.mma_weight_class || "",
+          height: profile.height || "",
+          weight: profile.weight || "",
+          phoneNumber: profile.phone_number || ""
+        });
+
+        // Set profile image if available
+        if (profile.profile_image_url) {
+          setProfileImage(profile.profile_image_url);
+        }
+
+        // Set user type and talent categories
+        setUserType(profile.role || "promoter");
+        
+        // Check if user is a fighting sport athlete
+        const categories = profile.talent_categories || [];
         const fightingSportsList = ['Boxer', 'MMA', 'Wrestler'];
         const userFightingSports = categories.filter((cat: string) => fightingSportsList.includes(cat));
         
@@ -60,10 +79,14 @@ export default function EditProfilePage() {
         setIsMMA(categories.includes('MMA'));
         setIsWrestler(categories.includes('Wrestler'));
         setFightingSports(userFightingSports);
+
+        console.log('Edit profile data loaded from Supabase:', profile);
       } catch (error) {
-        console.error('Error parsing talent categories:', error);
+        console.error('Error loading profile data:', error);
       }
-    }
+    };
+
+    loadProfileData();
   }, []);
 
   // Auto-adjust tempWeight when weight class changes
@@ -301,6 +324,8 @@ export default function EditProfilePage() {
   const saveModal = () => {
     if (activeModal === 'fullName') {
       setFormData(prev => ({ ...prev, fullName: modalValue }));
+    } else if (activeModal === 'phoneNumber') {
+      setFormData(prev => ({ ...prev, phoneNumber: modalValue }));
     } else if (activeModal === 'bio') {
       setFormData(prev => ({ ...prev, bio: modalValue }));
     } else if (activeModal?.startsWith('achievement-')) {
@@ -367,7 +392,7 @@ export default function EditProfilePage() {
     return { isValid: true, message: '' };
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     console.log('=== SAVE BUTTON CLICKED ===');
     console.log('talentSelectionOpen:', talentSelectionOpen);
     console.log('selectedTalents:', selectedTalents);
@@ -382,27 +407,57 @@ export default function EditProfilePage() {
       return;
     }
 
-    // Save profile data to localStorage
-    console.log('🔍 AUDIT: Before filtering - formData.achievements:', formData.achievements);
-    const filteredAchievements = formData.achievements.filter(achievement => achievement && achievement.trim() !== "");
-    console.log('🔍 AUDIT: After filtering - filteredAchievements:', filteredAchievements);
-    
-    const profileData = {
-      ...formData,
-      achievements: filteredAchievements,
-      socialLinks: formData.socialLinks.filter(link => link && link.trim() !== ""),
-      profileImage: profileImage,
-      sentFeedbackTalents: sentFeedbackTalents
-    };
-    
-    console.log('🔍 AUDIT: Final profileData being saved:', profileData);
-    localStorage.setItem('userProfile', JSON.stringify(profileData));
-    localStorage.setItem('savedProfile', JSON.stringify(profileData)); // Also save as savedProfile for GoalSection
-    
-    // Dispatch custom event to notify GoalSection of profile save
-    window.dispatchEvent(new CustomEvent('profileSaved'));
-    
-    router.push('/profile');
+    try {
+      const { supabase } = await import('@/lib/supabaseClient');
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        console.error('Error getting user:', authError);
+        setToastMessage('Error saving profile. Please try again.');
+        setToastOpen(true);
+        return;
+      }
+
+      // Filter out empty achievements and social links
+      const filteredAchievements = formData.achievements.filter(achievement => achievement && achievement.trim() !== "");
+      const filteredSocialLinks = formData.socialLinks.filter(link => link && link.trim() !== "");
+      
+      // Save profile data to Supabase
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({
+          full_name: formData.fullName || null,
+          bio: formData.bio || null,
+          achievements: filteredAchievements,
+          social_links: filteredSocialLinks,
+          boxing_weight_class: formData.boxingWeightClass || null,
+          mma_weight_class: formData.mmaWeightClass || null,
+          height: formData.height || null,
+          weight: formData.weight || null,
+          phone_number: formData.phoneNumber || null,
+          profile_image_url: profileImage || null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', user.id);
+
+      if (updateError) {
+        console.error('Error updating profile:', updateError);
+        setToastMessage('Error saving profile. Please try again.');
+        setToastOpen(true);
+        return;
+      }
+
+      console.log('Profile saved to Supabase successfully');
+      
+      // Dispatch custom event to notify GoalSection of profile save
+      window.dispatchEvent(new CustomEvent('profileSaved'));
+      
+      router.push('/profile');
+    } catch (error) {
+      console.error('Error saving profile:', error);
+      setToastMessage('Error saving profile. Please try again.');
+      setToastOpen(true);
+    }
   };
 
   // Slide transition for toast - slides from bottom for better mobile UX
@@ -565,6 +620,21 @@ export default function EditProfilePage() {
               {formData.fullName || "Type your full name"}
             </div>
           </div>
+
+          {/* Phone Number - Only show for promoters */}
+          {userType === "promoter" && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Phone Number
+              </label>
+              <div 
+                onClick={() => openModal('phoneNumber', formData.phoneNumber)}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors text-black"
+              >
+                {formData.phoneNumber || "Type your phone number"}
+              </div>
+            </div>
+          )}
 
           {/* Weight Class - Only show for talent users with fighting sports */}
           {userType === "talent" && fightingSports.length > 0 && (
@@ -822,11 +892,12 @@ export default function EditProfilePage() {
           />
           
           {/* Modal Content */}
-          <div className="relative w-full h-full bg-background shadow-xl flex flex-col">
+          <div className="relative w-full h-full bg-background shadow-xl flex flex-col bottom-sheet-with-textarea">
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-gray-600">
               <h3 className="text-lg font-semibold text-text-primary">
                 {activeModal === 'fullName' && 'Full Name'}
+                {activeModal === 'phoneNumber' && 'Phone Number'}
                 {activeModal === 'bio' && 'Bio'}
                 {activeModal?.startsWith('achievement-') && 'Achievement'}
                 {activeModal?.startsWith('social-') && 'Social Link'}
@@ -851,6 +922,7 @@ export default function EditProfilePage() {
                 rows={activeModal === 'bio' ? 12 : 8}
                 placeholder={
                   activeModal === 'fullName' ? 'Enter your full name' :
+                  activeModal === 'phoneNumber' ? 'Enter your phone number (e.g., +1-555-123-4567)' :
                   activeModal === 'bio' ? 'Tell us about yourself...' :
                   activeModal?.startsWith('achievement-') ? 'Enter achievement name' :
                   'https://instagram.com/username'

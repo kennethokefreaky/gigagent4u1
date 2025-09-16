@@ -6,6 +6,23 @@ import Navigation from "../components/Navigation";
 import { Dialog, DialogContent, IconButton } from "@mui/material";
 import { Close as CloseIcon } from "@mui/icons-material";
 
+interface UserData {
+  fullName: string;
+  userType: string;
+  hasBusinessLicense: boolean;
+  reviews: number;
+  rating: string;
+  bio: string;
+  achievements: string[];
+  socialLinks: string[];
+  reviewComments: any[];
+  boxingWeightClass: string;
+  mmaWeightClass: string;
+  height: string;
+  weight: string;
+  phoneNumber: string;
+}
+
 export default function ProfilePage() {
   const router = useRouter();
   const [showAllReviews, setShowAllReviews] = useState(false);
@@ -151,71 +168,85 @@ export default function ProfilePage() {
   };
 
   // User data state - loads from localStorage
-  const [userData, setUserData] = useState({
-    fullName: "Ryusuke",
+  const [userData, setUserData] = useState<UserData>({
+    fullName: "", // Will be replaced with email if empty
     userType: "Promoter", // or specific talent category
     hasBusinessLicense: true,
     reviews: 0,
     rating: "0.00",
-    bio: "Professional event promoter with 5+ years of experience in organizing memorable events.",
+    bio: "", // Empty by default
     achievements: [],
     socialLinks: [],
     reviewComments: [],
     boxingWeightClass: "",
     mmaWeightClass: "",
     height: "",
-    weight: ""
+    weight: "",
+    phoneNumber: ""
   });
 
   // Get user type and talent categories from localStorage
   const [userType, setUserType] = useState<string>("promoter");
   const [talentCategories, setTalentCategories] = useState<string[]>([]);
+  const [userEmail, setUserEmail] = useState<string>("");
 
-  // Load saved data from localStorage on component mount
+  // Load profile data from Supabase on component mount
   useEffect(() => {
-    const savedProfile = localStorage.getItem('userProfile');
-    console.log('🔍 AUDIT: Raw localStorage data:', savedProfile);
-    if (savedProfile) {
-      const parsedData = JSON.parse(savedProfile);
-      console.log('🔍 AUDIT: Parsed achievements:', parsedData.achievements);
-      console.log('🔍 AUDIT: Achievements type:', typeof parsedData.achievements);
-      console.log('🔍 AUDIT: Achievements length:', parsedData.achievements?.length);
-      console.log('🔍 AUDIT: Is array?', Array.isArray(parsedData.achievements));
-      
-      setUserData(prev => ({
-        ...prev,
-        fullName: parsedData.fullName || prev.fullName,
-        bio: parsedData.bio || prev.bio,
-        achievements: parsedData.achievements !== undefined ? parsedData.achievements : prev.achievements,
-        socialLinks: parsedData.socialLinks !== undefined ? parsedData.socialLinks : prev.socialLinks,
-        boxingWeightClass: parsedData.boxingWeightClass || "",
-        mmaWeightClass: parsedData.mmaWeightClass || "",
-        height: parsedData.height || "",
-        weight: parsedData.weight || ""
-      }));
-      
-      console.log('🔍 AUDIT: Final achievements after setUserData:', parsedData.achievements !== undefined ? parsedData.achievements : []);
-      if (parsedData.profileImage) {
-        setProfileImage(parsedData.profileImage);
-      }
-    }
-
-    // Load user type and talent categories
-    const storedUserType = localStorage.getItem('userType');
-    if (storedUserType) {
-      setUserType(storedUserType);
-    }
-
-    // Load talent categories from localStorage
-    const storedTalentCategories = localStorage.getItem('talentCategories');
-    if (storedTalentCategories) {
+    const loadProfileData = async () => {
       try {
-        const categories = JSON.parse(storedTalentCategories);
-        setTalentCategories(categories);
+        const { supabase } = await import('@/lib/supabaseClient');
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        
+        if (authError || !user) {
+          console.error('Error getting user:', authError);
+          return;
+        }
+
+        // Get user email
+        setUserEmail(user.email || "");
+
+        // Load profile data from Supabase
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+
+        if (profileError) {
+          console.error('Error loading profile:', profileError);
+          return;
+        }
+
+        // Update user data with Supabase data
+        setUserData(prev => ({
+          ...prev,
+          fullName: profile.full_name || "",
+          bio: profile.bio || "",
+          achievements: profile.achievements || [],
+          socialLinks: profile.social_links || [],
+          boxingWeightClass: profile.boxing_weight_class || "",
+          mmaWeightClass: profile.mma_weight_class || "",
+          height: profile.height || "",
+          weight: profile.weight || "",
+          phoneNumber: profile.phone_number || ""
+        }));
+
+        // Set profile image if available
+        if (profile.profile_image_url) {
+          setProfileImage(profile.profile_image_url);
+        }
+
+        // Set user type and talent categories
+        setUserType(profile.role || "promoter");
+        setTalentCategories(profile.talent_categories || []);
+
+        console.log('Profile data loaded from Supabase:', profile);
       } catch (error) {
-        console.error('Error parsing talent categories:', error);
+        console.error('Error loading profile data:', error);
       }
-    }
+    };
+
+    loadProfileData();
   }, []);
 
   return (
@@ -266,7 +297,24 @@ export default function ProfilePage() {
       {/* Main Content */}
       <div className="flex-1 bg-white pt-16 px-6">
         {/* User Name */}
-        <h1 className="text-2xl font-bold text-center text-black mb-2">{userData.fullName}</h1>
+        <h1 className="text-2xl font-bold text-center text-black mb-2">
+          {userData.fullName || userEmail || "User"}
+        </h1>
+
+        {/* Phone Number Call Button - Only show for promoters with phone number */}
+        {userType === "promoter" && userData.phoneNumber && (
+          <div className="flex justify-center mb-4">
+            <a
+              href={`tel:${userData.phoneNumber}`}
+              className="bg-green-600 text-white px-6 py-2 rounded-full text-sm font-semibold shadow-lg hover:bg-green-700 hover:shadow-xl transition-all duration-200 flex items-center space-x-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+              </svg>
+              <span>Call {userData.phoneNumber}</span>
+            </a>
+          </div>
+        )}
 
         {/* Verification Status Container */}
         {needsVerification && (
@@ -320,7 +368,11 @@ export default function ProfilePage() {
 
         {/* Bio */}
         <div className="text-center mb-6 px-4">
-          <p className="text-sm text-gray-600 leading-relaxed">{userData.bio}</p>
+          {userData.bio ? (
+            <p className="text-sm text-gray-600 leading-relaxed">{userData.bio}</p>
+          ) : (
+            <p className="text-sm text-gray-400 italic">No bio added yet</p>
+          )}
         </div>
 
         {/* Business License Status - Only for Promoters */}
@@ -424,7 +476,9 @@ export default function ProfilePage() {
 
         {/* Reviews Section */}
         <div className="mb-8">
-          <h2 className="text-xl font-bold text-black mb-4 text-center">0 reviews</h2>
+          <h2 className="text-xl font-bold text-black mb-4 text-center">
+            {userData.reviewComments.length} review{userData.reviewComments.length !== 1 ? 's' : ''}
+          </h2>
           <div className="space-y-4">
             {userData.reviewComments.length > 0 ? (
               <>
@@ -467,7 +521,12 @@ export default function ProfilePage() {
                   </svg>
                 </div>
                 <div className="text-lg font-medium text-gray-500 mb-2">No reviews yet</div>
-                <div className="text-sm text-gray-400">Reviews will appear here once you start getting feedback from talents</div>
+                <div className="text-sm text-gray-400">
+                  {userType === "promoter" 
+                    ? "Reviews will appear here once talents start rating your events" 
+                    : "Reviews will appear here once promoters start rating your performances"
+                  }
+                </div>
               </div>
             )}
           </div>

@@ -17,9 +17,6 @@ export default function AddEventPage() {
   //   router.push("/import/yelp");
   // };
 
-  const handleImportGoogle = () => {
-    router.push("/import/google");
-  };
 
   const handleImportEventbrite = () => {
     router.push("/import/eventbrite");
@@ -70,18 +67,6 @@ export default function AddEventPage() {
           </p>
         </div> */}
 
-        {/* Import Google Events Button */}
-        <div className="space-y-2">
-          <button
-            onClick={handleImportGoogle}
-            className="w-full bg-[#34A853] hover:bg-[#2E7D32] text-white py-4 px-6 rounded-xl font-semibold transition-colors transform hover:scale-[1.02] active:scale-[0.98]"
-          >
-            Import Google Events
-          </button>
-          <p className="text-text-secondary text-sm px-2">
-            Good for general events synced from your Google account.
-          </p>
-        </div>
 
         {/* Import Eventbrite Events Button */}
         <div className="space-y-2">

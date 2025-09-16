@@ -17,6 +17,21 @@ interface EventData {
   gigAmount: string;
 }
 
+// Safe normalization function to ensure all required fields exist
+const normalizeEventData = (data: any): EventData => ({
+  selectedTalents: data?.selectedTalents || [],
+  selectedWeightClasses: data?.selectedWeightClasses || [],
+  coverPhoto: data?.coverPhoto || null,
+  gigTitle: data?.gigTitle || "",
+  gigDescription: data?.gigDescription || "",
+  address: data?.address || "No address provided",
+  startDate: data?.startDate || "",
+  endDate: data?.endDate || "",
+  startTime: data?.startTime || "",
+  endTime: data?.endTime || "",
+  gigAmount: data?.gigAmount || "",
+});
+
 export default function PostPreviewPage() {
   const router = useRouter();
   const [eventData, setEventData] = useState<EventData | null>(null);
@@ -24,7 +39,13 @@ export default function PostPreviewPage() {
   useEffect(() => {
     const storedData = sessionStorage.getItem('eventData');
     if (storedData) {
-      setEventData(JSON.parse(storedData));
+      try {
+        const parsedData = JSON.parse(storedData);
+        setEventData(normalizeEventData(parsedData));
+      } catch (error) {
+        console.error('Error parsing event data:', error);
+        router.push("/create");
+      }
     } else {
       // Redirect back to create if no data
       router.push("/create");
@@ -40,6 +61,8 @@ export default function PostPreviewPage() {
   };
 
   const handleEditPost = () => {
+    // Navigate to create page without clearing sessionStorage
+    // The CreateEventPage will hydrate its state from the stored eventData
     router.push("/create");
   };
 

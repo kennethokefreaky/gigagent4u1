@@ -1,19 +1,20 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabaseClient';
 
 interface Notification {
   id: string;
-  type: 'first_event' | 'new_message' | 'location_based';
+  user_id: string;
+  type: 'first_event' | 'new_message' | 'location_based' | 'event_posted' | 'talent_accepted' | 'verification_required' | 'breakfast_reminder' | 'lunch_reminder' | 'dinner_reminder';
   title: string;
   message: string;
   buttonText: string;
-  buttonAction: () => void;
   icon: string;
   timeAgo: string;
   isRead: boolean;
   showConfetti?: boolean;
+  created_at: string;
 }
 
 interface NotificationContextType {
@@ -21,8 +22,9 @@ interface NotificationContextType {
   unreadCount: number;
   markAsRead: (id: string) => void;
   markAllAsRead: () => void;
-  addNotification: (notification: Omit<Notification, 'id' | 'isRead'>) => void;
+  addNotification: (notification: Omit<Notification, 'id' | 'isRead' | 'created_at' | 'timeAgo' | 'user_id'>) => void;
   removeNotification: (id: string) => void;
+  loadNotifications: () => Promise<void>;
 }
 
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
@@ -31,118 +33,217 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
 
-  // Initialize notifications only once
-  useEffect(() => {
-    if (isInitialized) return;
+  // Helper function to calculate time ago
+  const getTimeAgo = (createdAt: string) => {
+    const now = new Date();
+    const created = new Date(createdAt);
+    const diffInMinutes = Math.floor((now.getTime() - created.getTime()) / (1000 * 60));
+    
+    if (diffInMinutes < 1) return "Just now";
+    if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
+    if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h ago`;
+    return `${Math.floor(diffInMinutes / 1440)}d ago`;
+  };
 
-    const savedNotifications = localStorage.getItem('notifications');
-    if (savedNotifications) {
-      try {
-        const parsed = JSON.parse(savedNotifications);
-        setNotifications(parsed);
+  // Load notifications from Supabase
+  const loadNotifications = useCallback(async () => {
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        console.error("No authenticated user for notifications:", authError);
         setIsInitialized(true);
         return;
-      } catch (error) {
-        console.error('Error parsing saved notifications:', error);
       }
+
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        // If the notifications table doesn't exist yet, just log and continue
+        if (error.code === 'PGRST116' || error.message?.includes('relation "notifications" does not exist')) {
+          console.log('Notifications table not found - skipping notification loading');
+          setNotifications([]);
+          setIsInitialized(true);
+          return;
+        }
+        console.error('Error loading notifications:', error);
+        setNotifications([]);
+        setIsInitialized(true);
+        return;
+      }
+
+      // Convert Supabase data to Notification format
+      const formattedNotifications: Notification[] = (data || []).map(notif => ({
+        id: notif.id,
+        user_id: notif.user_id,
+        type: notif.type,
+        title: notif.title,
+        message: notif.message,
+        buttonText: notif.button_text,
+        icon: notif.icon,
+        timeAgo: getTimeAgo(notif.created_at),
+        isRead: notif.is_read,
+        showConfetti: notif.show_confetti,
+        created_at: notif.created_at
+      }));
+
+      setNotifications(formattedNotifications);
+      setIsInitialized(true);
+    } catch (error) {
+      console.error('Error loading notifications:', error);
+      setIsInitialized(true);
     }
+  }, []);
 
-    // If no saved notifications, use mock data
-    const mockNotifications: Notification[] = [
-      {
-        id: '1',
-        type: 'first_event',
-        title: 'Congratulations on your first event!',
-        message: 'Congratulations posting your first event! Now invite talent to make it amazing.',
-        buttonText: 'Invite Talent Now',
-        buttonAction: () => {
-          // This will be handled in the component
-        },
-        icon: '🚀',
-        timeAgo: '6m',
-        isRead: false,
-        showConfetti: true
-      },
-      {
-        id: '2',
-        type: 'new_message',
-        title: 'New Message',
-        message: 'Talent Sarah Johnson has sent you a new message',
-        buttonText: 'View Message',
-        buttonAction: () => {
-          // This will be handled in the component
-        },
-        icon: '💬',
-        timeAgo: '1h',
-        isRead: false
-      },
-      {
-        id: '3',
-        type: 'location_based',
-        title: 'Good Morning!',
-        message: 'Are you hungry? Try McDonald\'s for breakfast - it\'s just 0.3 miles away!',
-        buttonText: 'View Map',
-        buttonAction: () => {
-          // This will be handled in the component
-        },
-        icon: '🌅',
-        timeAgo: '2h',
-        isRead: false
-      },
-      {
-        id: '4',
-        type: 'location_based',
-        title: 'Evening Entertainment',
-        message: 'Hey, are you free? Enjoy Club Paradise - it\'s 1.2 miles away with live music tonight!',
-        buttonText: 'View Map',
-        buttonAction: () => {
-          // This will be handled in the component
-        },
-        icon: '🎵',
-        timeAgo: '4h',
-        isRead: false
-      }
-    ];
-
-    setNotifications(mockNotifications);
-    setIsInitialized(true);
-  }, [isInitialized]);
-
-  // Persist notification state to localStorage
+  // Initialize notifications
   useEffect(() => {
-    if (isInitialized && notifications.length > 0) {
-      localStorage.setItem('notifications', JSON.stringify(notifications));
+    if (!isInitialized) {
+      loadNotifications();
     }
-  }, [notifications, isInitialized]);
+  }, [isInitialized, loadNotifications]);
+
+  // Listen for custom events to refresh notifications
+  useEffect(() => {
+    const handleNotificationCreated = () => {
+      console.log('🔄 Notification created event received, refreshing notifications...');
+      loadNotifications();
+    };
+
+    window.addEventListener('notificationCreated', handleNotificationCreated);
+    
+    return () => {
+      window.removeEventListener('notificationCreated', handleNotificationCreated);
+    };
+  }, [loadNotifications]);
 
   const unreadCount = notifications.filter(notif => !notif.isRead).length;
 
-  const markAsRead = useCallback((id: string) => {
-    setNotifications(prev => 
-      prev.map(notif => 
-        notif.id === id ? { ...notif, isRead: true } : notif
-      )
-    );
+  const markAsRead = useCallback(async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error marking notification as read:', error);
+        return;
+      }
+
+      setNotifications(prev => 
+        prev.map(notif => 
+          notif.id === id ? { ...notif, isRead: true } : notif
+        )
+      );
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
+    }
   }, []);
 
-  const markAllAsRead = useCallback(() => {
-    setNotifications(prev => 
-      prev.map(notif => ({ ...notif, isRead: true }))
-    );
+  const markAllAsRead = useCallback(async () => {
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        console.error("No authenticated user for markAllAsRead:", authError);
+        return;
+      }
+
+      const { error } = await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('user_id', user.id)
+        .eq('is_read', false);
+
+      if (error) {
+        console.error('Error marking all notifications as read:', error);
+        return;
+      }
+
+      setNotifications(prev => 
+        prev.map(notif => ({ ...notif, isRead: true }))
+      );
+    } catch (error) {
+      console.error('Error marking all notifications as read:', error);
+    }
   }, []);
 
-  const addNotification = (notification: Omit<Notification, 'id' | 'isRead'>) => {
-    const newNotification: Notification = {
-      ...notification,
-      id: Date.now().toString(),
-      isRead: false
-    };
-    setNotifications(prev => [newNotification, ...prev]);
-  };
+  const addNotification = useCallback(async (notification: Omit<Notification, 'id' | 'isRead' | 'created_at' | 'timeAgo' | 'user_id'>) => {
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        console.error("No authenticated user for addNotification:", authError);
+        return;
+      }
 
-  const removeNotification = (id: string) => {
-    setNotifications(prev => prev.filter(notif => notif.id !== id));
-  };
+      const { data, error } = await supabase
+        .from('notifications')
+        .insert({
+          user_id: user.id,
+          type: notification.type,
+          title: notification.title,
+          message: notification.message,
+          button_text: notification.buttonText,
+          icon: notification.icon,
+          show_confetti: notification.showConfetti || false,
+          is_read: false
+        })
+        .select()
+        .single();
+
+      if (error) {
+        // If the notifications table doesn't exist yet, just log and continue
+        if (error.code === 'PGRST116' || error.message?.includes('relation "notifications" does not exist')) {
+          console.log('Notifications table not found - skipping notification creation');
+          return;
+        }
+        console.error('Error adding notification:', error);
+        return;
+      }
+
+      // Add to local state
+      const newNotification: Notification = {
+        id: data.id,
+        user_id: data.user_id,
+        type: data.type,
+        title: data.title,
+        message: data.message,
+        buttonText: data.button_text,
+        icon: data.icon,
+        timeAgo: getTimeAgo(data.created_at),
+        isRead: data.is_read,
+        showConfetti: data.show_confetti,
+        created_at: data.created_at
+      };
+
+      setNotifications(prev => [newNotification, ...prev]);
+    } catch (error) {
+      console.error('Error adding notification:', error);
+    }
+  }, []);
+
+  const removeNotification = useCallback(async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('notifications')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error removing notification:', error);
+        return;
+      }
+
+      setNotifications(prev => prev.filter(notif => notif.id !== id));
+    } catch (error) {
+      console.error('Error removing notification:', error);
+    }
+  }, []);
 
 
   return (
@@ -152,7 +253,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       markAsRead,
       markAllAsRead,
       addNotification,
-      removeNotification
+      removeNotification,
+      loadNotifications
     }}>
       {children}
     </NotificationContext.Provider>

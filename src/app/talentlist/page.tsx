@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { getAllTalentUsers, TalentUser } from "../../utils/eventUtils";
 
 interface Talent {
   id: string;
@@ -19,54 +20,32 @@ export default function TalentListPage() {
   const [filteredTalents, setFilteredTalents] = useState<Talent[]>([]);
   const [invitedTalents, setInvitedTalents] = useState<string[]>([]);
 
-  // Mock talent data - in real app, this would come from an API
+  // Load real talent data from Supabase
   useEffect(() => {
-    const mockTalents: Talent[] = [
-      {
-        id: "1",
-        name: "Alex Rodriguez",
-        categories: ["Boxer", "MMA"],
-        location: "New York, NY",
-        rating: 4.9
-      },
-      {
-        id: "2", 
-        name: "Sarah Johnson",
-        categories: ["Comedian"],
-        location: "Los Angeles, CA",
-        rating: 4.8
-      },
-      {
-        id: "3",
-        name: "Mike Thompson",
-        categories: ["Musician", "Comedian"],
-        location: "Chicago, IL",
-        rating: 4.7
-      },
-      {
-        id: "4",
-        name: "Emma Davis",
-        categories: ["Wrestler", "Boxer"],
-        location: "Miami, FL",
-        rating: 4.9
-      },
-      {
-        id: "5",
-        name: "James Wilson",
-        categories: ["Musician"],
-        location: "Austin, TX",
-        rating: 4.6
-      },
-      {
-        id: "6",
-        name: "Lisa Chen",
-        categories: ["Comedian", "Musician"],
-        location: "Seattle, WA",
-        rating: 4.8
+    const loadTalents = async () => {
+      try {
+        const talentUsers = await getAllTalentUsers();
+        
+        // Convert TalentUser to Talent format
+        const talentsData: Talent[] = talentUsers.map((user: TalentUser) => ({
+          id: user.id,
+          name: user.email.split('@')[0], // Use email username as name for now
+          categories: user.talent_categories || [],
+          location: "Location not set", // Default location
+          rating: 4.5 // Default rating
+        }));
+        
+        setTalents(talentsData);
+        setFilteredTalents(talentsData);
+      } catch (error) {
+        console.error('Error loading talents:', error);
+        // Fallback to empty array if error
+        setTalents([]);
+        setFilteredTalents([]);
       }
-    ];
-    setTalents(mockTalents);
-    setFilteredTalents(mockTalents);
+    };
+    
+    loadTalents();
   }, []);
 
   // Filter talents based on search query
@@ -201,8 +180,17 @@ export default function TalentListPage() {
               <svg className="w-16 h-16 text-text-secondary mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
               </svg>
-              <h2 className="text-text-primary font-bold text-lg mb-2">No talent found</h2>
-              <p className="text-text-secondary text-sm">Try searching with different keywords.</p>
+              {talents.length === 0 ? (
+                <>
+                  <h2 className="text-text-primary font-bold text-lg mb-2">No Talent Available</h2>
+                  <p className="text-text-secondary text-sm">No talent has signed up yet. Check back later for available candidates.</p>
+                </>
+              ) : (
+                <>
+                  <h2 className="text-text-primary font-bold text-lg mb-2">No talent found</h2>
+                  <p className="text-text-secondary text-sm">Try searching with different keywords.</p>
+                </>
+              )}
             </div>
           </div>
         )}

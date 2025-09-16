@@ -3,6 +3,7 @@
 import Navigation from "../components/Navigation";
 import { useState, useEffect, useRef } from "react";
 import Script from "next/script";
+import { checkAndCreateMealTimeNotification } from "../../utils/mealTimeNotifications";
 
 // Declare global google type
 declare global {
@@ -27,6 +28,10 @@ export default function MapPage() {
   const [currentLocationMarker, setCurrentLocationMarker] = useState<google.maps.Marker | null>(null);
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [currentMealTime, setCurrentMealTime] = useState<string | null>(null);
+  const [showMealTimeNotification, setShowMealTimeNotification] = useState(false);
+  const [showLeaveWarning, setShowLeaveWarning] = useState(false);
+  const [pendingDirectionsUrl, setPendingDirectionsUrl] = useState<string | null>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
@@ -101,6 +106,77 @@ export default function MapPage() {
     return { lat: 40.7128, lng: -74.0060 };
   };
 
+  // Get current meal time based on specific hours (handles all US timezones)
+  const getCurrentMealTime = (): string | null => {
+    const now = new Date();
+    
+    // Convert to US Eastern Time (EDT/EST)
+    const easternTime = new Date(now.toLocaleString("en-US", {timeZone: "America/New_York"}));
+    const hour = easternTime.getHours();
+    const minute = easternTime.getMinutes();
+    
+    // Only trigger at specific times: 9am, 12pm, 5pm Eastern Time
+    if (hour === 9 && minute === 0) {
+      return 'breakfast';
+    } else if (hour === 12 && minute === 0) {
+      return 'lunch';
+    } else if (hour === 17 && minute === 0) {
+      return 'dinner';
+    }
+    
+    return null;
+  };
+
+  // Check for meal-time notifications and set up meal-time search
+  const checkMealTimeNotifications = async () => {
+    try {
+      console.log('🍽️ Checking meal-time notifications...');
+      const { supabase } = await import('@/lib/supabaseClient');
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        console.log('❌ No authenticated user found');
+        return;
+      }
+
+      console.log('✅ User authenticated:', user.id);
+      const mealTime = getCurrentMealTime();
+      console.log('🕐 Current meal time:', mealTime);
+      setCurrentMealTime(mealTime);
+
+      if (mealTime) {
+        // Check if user has received meal-time notification today
+        const today = new Date();
+        const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+
+        const { data: notifications, error: notificationError } = await supabase
+          .from('notifications')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('type', `${mealTime}_reminder`)
+          .gte('created_at', startOfDay.toISOString())
+          .lt('created_at', endOfDay.toISOString())
+          .limit(1);
+
+        if (!notificationError && (!notifications || notifications.length === 0)) {
+          // Create meal-time notification
+          await checkAndCreateMealTimeNotification(user.id);
+        }
+
+        // Check if user came from a meal-time notification
+        const mealTimeFromStorage = sessionStorage.getItem('mealTime');
+        if (mealTimeFromStorage === mealTime) {
+          setShowMealTimeNotification(true);
+          // Auto-search for meal-time restaurants
+          searchMealTimeRestaurants(mealTime);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking meal-time notifications:', error);
+    }
+  };
+
   // Calculate distance between two points
   const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number) => {
     const R = 3959; // Earth's radius in miles
@@ -122,7 +198,7 @@ export default function MapPage() {
         
         try {
         const mapInstance = new window.google.maps.Map(mapRef.current, {
-            center: coordinates,
+          center: coordinates,
           zoom: 12,
           disableDefaultUI: true,
           zoomControl: true,
@@ -130,6 +206,175 @@ export default function MapPage() {
             position: window.google.maps.ControlPosition.RIGHT_BOTTOM,
           }
         });
+
+        // Check for event address from eventdetail page
+        const eventAddress = sessionStorage.getItem('eventAddress');
+        if (eventAddress) {
+          // Geocode the event address and add a green pin
+          const geocoder = new window.google.maps.Geocoder();
+          geocoder.geocode({ address: eventAddress }, (results, status) => {
+            if (status === 'OK' && results && results.length > 0) {
+              const eventLocation = results[0].geometry.location;
+              const placeId = results[0].place_id;
+              
+              // Get venue name from Google Places API
+              let venueName = eventAddress; // fallback to address
+              if (placeId) {
+                const service = new window.google.maps.places.PlacesService(
+                  document.createElement('div')
+                );
+                
+                service.getDetails(
+                  {
+                    placeId: placeId,
+                    fields: ['name', 'formatted_address']
+                  },
+                  (place, placeStatus) => {
+                    if (placeStatus === window.google.maps.places.PlacesServiceStatus.OK && place) {
+                      venueName = place.name || eventAddress;
+                    }
+                    
+                    // Create green pin marker for event location
+                    const eventMarker = new window.google.maps.Marker({
+                      position: eventLocation,
+                      map: mapInstance,
+                      title: venueName,
+                      icon: {
+                        url: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(`
+                          <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="20" cy="20" r="18" fill="#10B981" stroke="#ffffff" stroke-width="3"/>
+                            <circle cx="20" cy="20" r="8" fill="#ffffff"/>
+                            <circle cx="20" cy="20" r="4" fill="#10B981"/>
+                          </svg>
+                        `),
+                        scaledSize: new window.google.maps.Size(40, 40),
+                        anchor: new window.google.maps.Point(20, 20),
+                      },
+                      zIndex: 1000,
+                    });
+
+                    // Create info window for event location with venue details
+                    const eventInfoWindow = new window.google.maps.InfoWindow({
+                      content: `
+                        <div style="
+                          background: white; 
+                          color: black; 
+                          padding: 16px; 
+                          border-radius: 12px; 
+                          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                          border: 1px solid #e5e7eb;
+                          min-width: 250px;
+                          max-width: 300px;
+                        ">
+                          <div style="font-size: 18px; font-weight: 600; margin-bottom: 8px; color: #111827;">${venueName}</div>
+                          <div style="font-size: 14px; color: #6b7280; margin-bottom: 16px; line-height: 1.4;">${eventAddress}</div>
+                          <button 
+                            onclick="window.open('https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(eventAddress)}', '_blank')"
+                            style="
+                              background: #10B981; 
+                              color: white; 
+                              border: none;
+                              padding: 12px 20px; 
+                              border-radius: 8px; 
+                              font-weight: 600; 
+                              font-size: 14px;
+                              width: 100%;
+                              cursor: pointer;
+                              transition: background-color 0.2s;
+                            "
+                            onmouseover="this.style.backgroundColor='#059669'"
+                            onmouseout="this.style.backgroundColor='#10B981'"
+                          >
+                            Get Directions
+                          </button>
+                        </div>
+                      `,
+                      disableAutoPan: true,
+                    });
+
+                    // Show info window when marker is clicked
+                    eventMarker.addListener('click', () => {
+                      eventInfoWindow.open(mapInstance, eventMarker);
+                    });
+
+                    // Center map on event location
+                    mapInstance.setCenter(eventLocation);
+                    mapInstance.setZoom(15);
+                  }
+                );
+              } else {
+                // Fallback if no place ID
+                const eventMarker = new window.google.maps.Marker({
+                  position: eventLocation,
+                  map: mapInstance,
+                  title: venueName,
+                  icon: {
+                    url: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(`
+                      <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="20" cy="20" r="18" fill="#10B981" stroke="#ffffff" stroke-width="3"/>
+                        <circle cx="20" cy="20" r="8" fill="#ffffff"/>
+                        <circle cx="20" cy="20" r="4" fill="#10B981"/>
+                      </svg>
+                    `),
+                    scaledSize: new window.google.maps.Size(40, 40),
+                    anchor: new window.google.maps.Point(20, 20),
+                  },
+                  zIndex: 1000,
+                });
+
+                const eventInfoWindow = new window.google.maps.InfoWindow({
+                  content: `
+                    <div style="
+                      background: white; 
+                      color: black; 
+                      padding: 16px; 
+                      border-radius: 12px; 
+                      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                      border: 1px solid #e5e7eb;
+                      min-width: 250px;
+                      max-width: 300px;
+                    ">
+                      <div style="font-size: 18px; font-weight: 600; margin-bottom: 8px; color: #111827;">${venueName}</div>
+                      <div style="font-size: 14px; color: #6b7280; margin-bottom: 16px; line-height: 1.4;">Event Location</div>
+                      <button 
+                        onclick="window.open('https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(eventAddress)}', '_blank')"
+                        style="
+                          background: #10B981; 
+                          color: white; 
+                          border: none;
+                          padding: 12px 20px; 
+                          border-radius: 8px; 
+                          font-weight: 600; 
+                          font-size: 14px;
+                          width: 100%;
+                          cursor: pointer;
+                          transition: background-color 0.2s;
+                        "
+                        onmouseover="this.style.backgroundColor='#059669'"
+                        onmouseout="this.style.backgroundColor='#10B981'"
+                      >
+                        Get Directions
+                      </button>
+                    </div>
+                  `,
+                  disableAutoPan: true,
+                });
+
+                eventMarker.addListener('click', () => {
+                  eventInfoWindow.open(mapInstance, eventMarker);
+                });
+
+                mapInstance.setCenter(eventLocation);
+                mapInstance.setZoom(15);
+              }
+              
+              // Clear the event address from sessionStorage
+              sessionStorage.removeItem('eventAddress');
+            }
+          });
+        }
 
           // Create a larger, more prominent current location marker
           const currentMarker = new window.google.maps.Marker({
@@ -204,6 +449,14 @@ export default function MapPage() {
   useEffect(() => {
     if (map && isGoogleMapsLoaded) {
       checkAvailableCategories();
+    }
+  }, [map, isGoogleMapsLoaded]);
+
+  // Check for meal-time notifications when map loads
+  useEffect(() => {
+    if (map && isGoogleMapsLoaded) {
+      console.log('🗺️ Map loaded, checking meal-time notifications...');
+      checkMealTimeNotifications();
     }
   }, [map, isGoogleMapsLoaded]);
 
@@ -423,6 +676,75 @@ export default function MapPage() {
     setIsCheckingCategories(false);
   };
 
+  // Search for meal-time restaurants with food icons
+  const searchMealTimeRestaurants = (mealTime: string) => {
+    if (!map) return;
+    
+    const coordinates = getCoordinates();
+    const service = new window.google.maps.places.PlacesService(map);
+    
+    // Define meal-time specific keywords
+    const mealKeywords = {
+      breakfast: 'breakfast restaurant cafe diner',
+      lunch: 'lunch restaurant food',
+      dinner: 'dinner restaurant fine dining'
+    };
+    
+    const request = {
+      location: coordinates,
+      radius: 5000, // 5km radius
+      type: 'restaurant',
+      keyword: mealKeywords[mealTime as keyof typeof mealKeywords] || 'restaurant'
+    };
+
+    service.nearbySearch(request, (results: google.maps.places.PlaceResult[] | null, status: google.maps.places.PlacesServiceStatus) => {
+      if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
+        // Clear existing markers
+        clearMarkers();
+        
+        // Add markers for found places with food icons
+        results.slice(0, 10).forEach((place: google.maps.places.PlaceResult) => {
+          if (place.geometry?.location) {
+            const newMarker = new window.google.maps.Marker({
+              position: place.geometry.location,
+              map: map,
+              title: place.name,
+              icon: {
+                url: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(`
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="12" cy="12" r="10" fill="#FF6B6B" stroke="#ffffff" stroke-width="2"/>
+                    <path d="M8 10h8v4H8v-4z" fill="#ffffff"/>
+                    <path d="M10 8v8M14 8v8" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+                  </svg>
+                `),
+                scaledSize: new window.google.maps.Size(24, 24),
+              }
+            });
+            
+            // Add click listener to marker
+            newMarker.addListener('click', () => {
+              setSelectedPlace(place);
+              setShowDirectionsPopup(true);
+            });
+            
+            markersRef.current.push(newMarker);
+          }
+        });
+        
+        // Fit map to show all markers
+        if (results.length > 0) {
+          const bounds = new window.google.maps.LatLngBounds();
+          results.slice(0, 10).forEach((place: google.maps.places.PlaceResult) => {
+            if (place.geometry?.location) {
+              bounds.extend(place.geometry.location);
+            }
+          });
+          map.fitBounds(bounds);
+        }
+      }
+    });
+  };
+
   // Search for nearby places
   const searchNearby = (type: string, keyword: string) => {
     if (!map) return;
@@ -585,6 +907,39 @@ export default function MapPage() {
             }} 
           />
         )}
+
+        {/* Meal-time Notification Banner */}
+        {showMealTimeNotification && currentMealTime && (
+          <div className="absolute top-4 left-4 right-4 z-10 bg-gradient-to-r from-orange-500 to-red-500 text-white p-4 rounded-xl shadow-lg">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="text-2xl">
+                  {currentMealTime === 'breakfast' ? '🌅' : currentMealTime === 'lunch' ? '☀️' : '🌙'}
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg">
+                    {currentMealTime === 'breakfast' ? 'Good Morning!' : 
+                     currentMealTime === 'lunch' ? 'Lunch Time!' : 'Dinner Time!'}
+                  </h3>
+                  <p className="text-sm opacity-90">
+                    {currentMealTime === 'breakfast' ? 'Find breakfast spots near you' :
+                     currentMealTime === 'lunch' ? 'Discover great lunch options' : 
+                     'End your day with a delicious meal'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowMealTimeNotification(false)}
+                className="text-white hover:text-gray-200 transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
 
         {/* Floating Search Bar */}
         <div className="absolute top-4 left-4 right-4 z-10">

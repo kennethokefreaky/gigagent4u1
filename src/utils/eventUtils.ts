@@ -1,6 +1,7 @@
 export interface EventData {
   id: string;
   selectedTalents: string[];
+  selectedWeightClasses: string[];
   coverPhoto: string | null;
   gigTitle: string;
   gigDescription: string;
@@ -12,6 +13,8 @@ export interface EventData {
   gigAmount: string;
   createdAt: string;
   status: 'active' | 'completed' | 'cancelled';
+  promoterId?: string; // Added for Supabase posts
+  source?: string; // Added for Supabase posts
 }
 
 export const generateEventId = (): string => {
@@ -63,6 +66,77 @@ export const getAllEvents = (): EventData[] => {
     }
   }
   return [];
+};
+
+// New function to fetch posts from Supabase
+export const getAllPostsFromSupabase = async (): Promise<EventData[]> => {
+  try {
+    const { supabase } = await import('@/lib/supabaseClient');
+    const { data, error } = await supabase
+      .from('posts')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching posts from Supabase:', error);
+      return [];
+    }
+
+    // Convert Supabase posts to EventData format
+    return data.map(post => ({
+      id: post.id,
+      selectedTalents: post.talents || [],
+      selectedWeightClasses: post.weight_classes || [],
+      coverPhoto: post.cover_photo,
+      gigTitle: post.title,
+      gigDescription: post.description,
+      address: post.location,
+      startDate: post.start_date,
+      endDate: post.end_date,
+      startTime: post.start_time,
+      endTime: post.end_time,
+      gigAmount: post.amount,
+      createdAt: post.created_at,
+      status: 'active' as const,
+      promoterId: post.promoter_id,
+      source: post.source
+    }));
+  } catch (error) {
+    console.error('Error importing Supabase client:', error);
+    return [];
+  }
+};
+
+// Interface for talent user data
+export interface TalentUser {
+  id: string;
+  email: string;
+  talent_categories: string[];
+  verification_status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// Function to fetch all talent users from Supabase
+export const getAllTalentUsers = async (): Promise<TalentUser[]> => {
+  try {
+    const { supabase } = await import('@/lib/supabaseClient');
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('role', 'talent')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching talent users from Supabase:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Error importing Supabase client:', error);
+    return [];
+  }
 };
 
 export const getActiveEvents = (): EventData[] => {

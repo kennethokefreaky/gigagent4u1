@@ -2,11 +2,13 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useKeyboardVisibility } from "@/hooks/useKeyboardVisibility";
 
 type TalentCategory = "Boxer" | "MMA" | "Comedian" | "Musician" | "Promoter" | "Other" | "Wrestler";
 
 export default function CreateEventPage() {
   const router = useRouter();
+  const isKeyboardVisible = useKeyboardVisibility();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -186,6 +188,34 @@ export default function CreateEventPage() {
       fetchAddressSuggestions(value);
     }, 300);
   }, [fetchAddressSuggestions]);
+
+  // Hydrate state from sessionStorage on mount (for editing existing events)
+  useEffect(() => {
+    try {
+      const storedData = sessionStorage.getItem('eventData');
+      if (storedData) {
+        const eventData = JSON.parse(storedData);
+        
+        // Hydrate form fields from stored event data
+        if (eventData.coverPhoto) setCoverPhoto(eventData.coverPhoto);
+        if (eventData.gigTitle) setGigTitle(eventData.gigTitle);
+        if (eventData.gigDescription) setGigDescription(eventData.gigDescription);
+        if (eventData.address) setAddress(eventData.address);
+        if (eventData.startDate) setStartDate(eventData.startDate);
+        if (eventData.endDate) setEndDate(eventData.endDate);
+        if (eventData.startTime) setStartTime(eventData.startTime);
+        if (eventData.endTime) setEndTime(eventData.endTime);
+        if (eventData.gigAmount) setGigAmount(eventData.gigAmount);
+        
+        // Note: Intentionally NOT hydrating selectedTalents and selectedWeightClasses
+        // This allows users to manually select talents/weight classes for imported events
+        // or change their selections when editing existing events
+      }
+    } catch (error) {
+      console.error('Error loading event data for editing:', error);
+      // Continue with default state if parsing fails
+    }
+  }, []);
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -880,7 +910,7 @@ export default function CreateEventPage() {
       {/* Description Bottom Sheet */}
       {showDescriptionBottomSheet && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end">
-          <div className="bg-surface w-full rounded-t-xl p-4 max-h-[90vh] min-h-[60vh] bottom-sheet">
+          <div className="bg-surface w-full rounded-t-xl p-4 max-h-[90vh] min-h-[60vh] bottom-sheet-with-textarea">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-subheading font-semibold">Gig Description</h3>
               <button
@@ -914,7 +944,7 @@ export default function CreateEventPage() {
             }
           }}
         >
-          <div className="bg-surface w-full rounded-t-xl p-4 max-h-[90vh] min-h-[60vh] bottom-sheet overflow-hidden flex flex-col">
+          <div className="bg-surface w-full rounded-t-xl p-4 max-h-[90vh] min-h-[60vh] bottom-sheet-with-textarea overflow-hidden flex flex-col">
             <div className="flex justify-between items-center mb-4 flex-shrink-0">
               <h3 className="text-subheading font-semibold">Address</h3>
               <button

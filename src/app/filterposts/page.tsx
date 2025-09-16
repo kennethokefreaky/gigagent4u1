@@ -28,8 +28,21 @@ export default function FilterPostsPage() {
 
   // Load all events on component mount
   useEffect(() => {
-    const events = getAllEvents();
-    setAllEvents(events);
+    const loadEvents = async () => {
+      try {
+        const { getAllPostsFromSupabase } = await import('../../utils/eventUtils');
+        const supabaseEvents = await getAllPostsFromSupabase();
+        const sessionEvents = getAllEvents();
+        const allEvents = [...supabaseEvents, ...sessionEvents];
+        setAllEvents(allEvents);
+      } catch (error) {
+        console.error('Error loading events:', error);
+        const events = getAllEvents();
+        setAllEvents(events);
+      }
+    };
+    
+    loadEvents();
   }, []);
 
   // Update filtered count whenever filters or events change

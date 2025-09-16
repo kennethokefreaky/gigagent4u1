@@ -3,11 +3,89 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { EventData } from "../../utils/eventUtils";
+import { getVenueInfo, VenueInfo } from "../../utils/googleMapsUtils";
 
+
+interface PromoterData {
+  id: string;
+  full_name: string;
+  phone_number: string;
+  profile_image_url: string;
+}
 
 export default function EventDetailPage() {
   const router = useRouter();
   const [eventData, setEventData] = useState<EventData | null>(null);
+  const [promoterData, setPromoterData] = useState<PromoterData | null>(null);
+  const [venueInfo, setVenueInfo] = useState<VenueInfo | null>(null);
+  const [showCopySuccess, setShowCopySuccess] = useState(false);
+
+  // Fetch promoter data from Supabase
+  const fetchPromoterData = async (promoterId: string) => {
+    try {
+      console.log('🔍 Fetching promoter data for ID:', promoterId);
+      const { supabase } = await import('@/lib/supabaseClient');
+      const { data: promoter, error } = await supabase
+        .from('profiles')
+        .select('id, full_name, phone_number, profile_image_url')
+        .eq('id', promoterId)
+        .single();
+
+      if (error) {
+        console.error('❌ Error fetching promoter data:', error);
+        console.log('📋 Error details:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        });
+        
+        // Set fallback promoter data if profile doesn't exist
+        setPromoterData({
+          id: promoterId,
+          full_name: 'Event Organizer',
+          phone_number: '',
+          profile_image_url: ''
+        });
+        return;
+      }
+
+      console.log('✅ Promoter data fetched successfully:', promoter);
+      setPromoterData(promoter);
+    } catch (error) {
+      console.error('❌ Exception fetching promoter data:', error);
+      // Set fallback promoter data on any error
+      setPromoterData({
+        id: promoterId,
+        full_name: 'Event Organizer',
+        phone_number: '',
+        profile_image_url: ''
+      });
+    }
+  };
+
+  // Fetch venue information using Google Maps API
+  const fetchVenueInfo = async (address: string) => {
+    try {
+      // Wait for Google Maps API to be loaded
+      if (typeof window !== 'undefined' && window.google && window.google.maps) {
+        const venue = await getVenueInfo(address);
+        setVenueInfo(venue);
+      } else {
+        // Fallback if Google Maps API is not loaded
+        setVenueInfo({
+          name: 'Venue',
+          address: address
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching venue info:', error);
+      setVenueInfo({
+        name: 'Venue',
+        address: address
+      });
+    }
+  };
 
   useEffect(() => {
     // First try to get selected event data
@@ -19,8 +97,24 @@ export default function EventDetailPage() {
     }
     
     if (storedData) {
-      setEventData(JSON.parse(storedData));
+      const parsedData = JSON.parse(storedData);
+      console.log('📄 Event data loaded:', parsedData);
+      setEventData(parsedData);
+      
+      // Fetch promoter data if promoterId exists
+      if (parsedData.promoterId) {
+        console.log('👤 Promoter ID found:', parsedData.promoterId);
+        fetchPromoterData(parsedData.promoterId);
+      } else {
+        console.log('⚠️ No promoter ID found in event data');
+      }
+      
+      // Fetch venue info if address exists
+      if (parsedData.address) {
+        fetchVenueInfo(parsedData.address);
+      }
     } else {
+      console.log('❌ No event data found in sessionStorage');
       // Redirect back to gigagent4u if no data
       router.push("/gigagent4u");
     }
@@ -34,6 +128,36 @@ export default function EventDetailPage() {
     // Handle apply logic here
     console.log("Apply button clicked");
     // You can add navigation or other logic as needed
+  };
+
+  // Enhanced call functionality for different devices
+  const handleCall = async (phoneNumber: string) => {
+    try {
+      // Check if we're on a mobile device
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      
+      if (isMobile) {
+        // On mobile, use tel: protocol which should open the phone app
+        window.location.href = `tel:${phoneNumber}`;
+      } else {
+        // On desktop/tablet, try to copy to clipboard and show success message
+        await navigator.clipboard.writeText(phoneNumber);
+        setShowCopySuccess(true);
+        setTimeout(() => setShowCopySuccess(false), 2000);
+      }
+    } catch (error) {
+      console.error('Error handling call:', error);
+      // Fallback: try to copy to clipboard
+      try {
+        await navigator.clipboard.writeText(phoneNumber);
+        setShowCopySuccess(true);
+        setTimeout(() => setShowCopySuccess(false), 2000);
+      } catch (clipboardError) {
+        console.error('Clipboard copy failed:', clipboardError);
+        // Final fallback: show the number in an alert
+        alert(`Phone number: ${phoneNumber}`);
+      }
+    }
   };
 
   const getAmountLabel = () => {
@@ -176,20 +300,107 @@ export default function EventDetailPage() {
           </div>
 
           <div className="flex space-x-3 mt-4">
-            <button className="flex-1 bg-white border border-gray-300 text-black py-2 px-4 rounded-lg flex items-center justify-center space-x-2 hover:bg-gray-50 transition-colors">
+            <button 
+              onClick={() => {
+                // Store event address for maps page
+                sessionStorage.setItem('eventAddress', eventData?.address || '');
+                router.push('/map');
+              }}
+              className="flex-1 bg-white border border-gray-300 text-black py-2 px-4 rounded-lg flex items-center justify-center space-x-2 hover:bg-gray-50 transition-colors"
+            >
               <span className="text-sm">Directions</span>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
             </button>
-            <button className="flex-1 bg-white border border-gray-300 text-black py-2 px-4 rounded-lg flex items-center justify-center space-x-2 hover:bg-gray-50 transition-colors">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-              </svg>
-              <span className="text-sm">Call venue</span>
-            </button>
+            {venueInfo?.phoneNumber ? (
+              <button
+                onClick={() => handleCall(venueInfo.phoneNumber!)}
+                className="flex-1 bg-white border border-gray-300 text-black py-2 px-4 rounded-lg flex items-center justify-center space-x-2 hover:bg-gray-50 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                </svg>
+                <span className="text-sm">Call venue</span>
+              </button>
+            ) : (
+              <button 
+                disabled
+                className="flex-1 bg-gray-100 border border-gray-300 text-gray-400 py-2 px-4 rounded-lg flex items-center justify-center space-x-2 cursor-not-allowed"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                </svg>
+                <span className="text-sm">No phone</span>
+              </button>
+            )}
           </div>
         </div>
+
+        {/* Gig Contact Section */}
+        {promoterData && (
+          <div className="bg-white mx-4 mt-4 rounded-xl p-4">
+            <h3 className="text-lg font-semibold text-black mb-4">Gig contact</h3>
+            
+            <div className="flex items-center space-x-4 mb-4">
+              {/* Promoter Profile Picture */}
+              <div className="w-12 h-12 bg-gray-300 rounded-full flex items-center justify-center overflow-hidden">
+                {promoterData.profile_image_url ? (
+                  <img 
+                    src={promoterData.profile_image_url} 
+                    alt="Promoter" 
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <span className="text-xl">👤</span>
+                )}
+              </div>
+              
+              {/* Promoter Info */}
+              <div className="flex-1">
+                <h4 className="font-semibold text-black">
+                  {promoterData.full_name || "Promoter"}
+                </h4>
+                <p className="text-sm text-gray-600">Event Organizer</p>
+              </div>
+            </div>
+
+            {/* Contact Buttons */}
+            <div className="flex space-x-3">
+              {promoterData.phone_number && (
+                <button
+                  onClick={() => handleCall(promoterData.phone_number)}
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                  </svg>
+                  <span className="text-sm">Call</span>
+                </button>
+              )}
+              
+              <button 
+                onClick={() => {
+                  // Store event data for the group conversation
+                  if (eventData) {
+                    sessionStorage.setItem('selectedEventForChat', JSON.stringify({
+                      eventId: eventData.id,
+                      eventTitle: eventData.gigTitle,
+                      promoterId: eventData.promoterId
+                    }));
+                  }
+                  router.push('/messages');
+                }}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+                <span className="text-sm">Chat</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Gig Description Section */}
         <div className="bg-white mx-4 mt-4 rounded-xl p-4">
@@ -199,43 +410,19 @@ export default function EventDetailPage() {
           </p>
         </div>
 
-        {/* Gig Contact Section */}
-        <div className="bg-white mx-4 mt-4 rounded-xl p-4">
-          <h3 className="text-lg font-semibold text-black mb-3">Gig contact</h3>
-          
-          <div className="flex items-center space-x-3 mb-4">
-            <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center">
-              <svg className="w-6 h-6 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-black font-medium">Contact</p>
-              <p className="text-gray-600 text-sm">Contact info</p>
-            </div>
-            <button className="ml-auto p-2 hover:bg-gray-100 rounded-full transition-colors">
-              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          </div>
+      </div>
 
-          <div className="flex space-x-3">
-            <button className="flex-1 bg-white border border-gray-300 text-black py-2 px-4 rounded-lg flex items-center justify-center space-x-2 hover:bg-gray-50 transition-colors">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-              </svg>
-              <span className="text-sm">Call</span>
-            </button>
-            <button className="flex-1 bg-white border border-gray-300 text-black py-2 px-4 rounded-lg flex items-center justify-center space-x-2 hover:bg-gray-50 transition-colors">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-              <span className="text-sm">Chat</span>
-            </button>
+      {/* Copy Success Toast */}
+      {showCopySuccess && (
+        <div className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg z-50 animate-in fade-in-0 slide-in-from-top-2 duration-300">
+          <div className="flex items-center space-x-2">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            <span className="font-medium">Phone number copied to clipboard!</span>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Sticky Footer */}
       <div className="fixed bottom-0 left-0 right-0 bg-surface border-t border-text-secondary p-4">

@@ -2,17 +2,43 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { EventData, saveEvent } from "../../utils/eventUtils";
+import { EventData } from "../../utils/eventUtils";
+import { supabase } from "@/lib/supabaseClient";
+import { useNotifications } from "@/contexts/NotificationContext";
 
+// Safe normalization function to ensure all required fields exist
+const normalizeEventData = (data: any): EventData => ({
+  id: data?.id || `temp_${Date.now()}`,
+  selectedTalents: data?.selectedTalents || [],
+  selectedWeightClasses: data?.selectedWeightClasses || [],
+  coverPhoto: data?.coverPhoto || null,
+  gigTitle: data?.gigTitle || "",
+  gigDescription: data?.gigDescription || "",
+  address: data?.address || "No address provided",
+  startDate: data?.startDate || "",
+  endDate: data?.endDate || "",
+  startTime: data?.startTime || "",
+  endTime: data?.endTime || "",
+  gigAmount: data?.gigAmount || "",
+  createdAt: data?.createdAt || new Date().toISOString(),
+  status: data?.status || 'active',
+});
 
 export default function EventDetailPreviewPage() {
   const router = useRouter();
+  const { addNotification } = useNotifications();
   const [eventData, setEventData] = useState<EventData | null>(null);
 
   useEffect(() => {
     const storedData = sessionStorage.getItem('eventData');
     if (storedData) {
-      setEventData(JSON.parse(storedData));
+      try {
+        const parsedData = JSON.parse(storedData);
+        setEventData(normalizeEventData(parsedData));
+      } catch (error) {
+        console.error('Error parsing event data:', error);
+        router.push("/create");
+      }
     } else {
       // Redirect back to create if no data
       router.push("/create");
@@ -23,16 +49,115 @@ export default function EventDetailPreviewPage() {
     router.push("/postpreview");
   };
 
-  const handlePost = () => {
+  const handlePost = async () => {
     if (!eventData) return;
 
-    // Use utility function to save the event
-    const newEvent = saveEvent(eventData);
-    
-    router.push("/gigagent4u");
+    try {
+      // Get current user
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      
+      console.log("Auth check - User:", user);
+      console.log("Auth check - Error:", userError);
+      
+      if (userError) {
+        console.error("Auth error:", userError);
+        alert("Authentication error. Please try signing in again.");
+        return;
+      }
+      
+      if (!user) {
+        console.log("No user found, redirecting to welcome page");
+        alert("You must be logged in to post. Redirecting to sign in...");
+        router.push("/welcome");
+        return;
+      }
+
+      // Insert into Supabase
+      const { error: insertError } = await supabase.from("posts").insert({
+        promoter_id: user.id,
+        source: eventData.coverPhoto?.includes("eventbrite") ? "eventbrite" : "manual",
+        title: eventData.gigTitle,
+        description: eventData.gigDescription,
+        location: eventData.address,
+        start_date: eventData.startDate,
+        end_date: eventData.endDate,
+        start_time: eventData.startTime,
+        end_time: eventData.endTime,
+        amount: eventData.gigAmount,
+        cover_photo: eventData.coverPhoto,
+        talents: eventData.selectedTalents,
+        weight_classes: eventData.selectedWeightClasses,
+      });
+
+      if (insertError) {
+        console.error("Error saving post:", insertError);
+        alert("Error posting event. Try again.");
+      } else {
+        console.log("Event saved successfully");
+        
+        // Check if this is the user's first event
+        const { data: existingPosts, error: postsError } = await supabase
+          .from('posts')
+          .select('id')
+          .eq('promoter_id', user.id);
+
+        const isFirstEvent = !postsError && existingPosts && existingPosts.length === 1;
+
+        // Create notification for the promoter
+        if (isFirstEvent) {
+          await addNotification({
+            type: 'first_event',
+            title: 'Congratulations on your first event!',
+            message: 'Congratulations posting your first event! Now invite talent to make it amazing.',
+            buttonText: 'Invite Talent Now',
+            icon: '🚀',
+            showConfetti: true
+          });
+        } else {
+          await addNotification({
+            type: 'event_posted',
+            title: 'Event Posted Successfully!',
+            message: `Your event "${eventData.gigTitle}" has been posted and is now visible to talents.`,
+            buttonText: 'View Event',
+            icon: '✅'
+          });
+        }
+
+        // Create notifications for all talents about the new event
+        const { data: talents, error: talentsError } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('role', 'talent');
+
+        if (!talentsError && talents && talents.length > 0) {
+          // Create notifications for each talent individually
+          for (const talent of talents) {
+            await supabase.from('notifications').insert({
+              user_id: talent.id,
+              type: 'event_posted',
+              title: 'New Event Available!',
+              message: `A new event "${eventData.gigTitle}" has been posted. Check it out!`,
+              button_text: 'View Event',
+              icon: '🎯',
+              show_confetti: false,
+              is_read: false
+            });
+          }
+        }
+
+        // Dispatch custom event to notify other components
+        window.dispatchEvent(new CustomEvent('postCreated'));
+        router.push("/gigagent4u"); // redirect to dashboard/feed
+      }
+    } catch (err) {
+      console.error("Unexpected error:", err);
+      alert("Unexpected error. Try again.");
+    }
   };
 
   const handleEdit = () => {
+    // Navigate to create page without clearing sessionStorage
+    // The CreateEventPage will hydrate its state from the stored eventData
     router.push("/create");
   };
 

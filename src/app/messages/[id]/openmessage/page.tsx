@@ -2,167 +2,110 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
-
-interface Message {
-  id: string;
-  text: string;
-  timestamp: string;
-  sender: 'promoter' | 'talent';
-  isRead: boolean;
-}
-
-interface Conversation {
-  id: string;
-  name: string;
-  avatar: string;
-  category: string;
-  isOnline: boolean;
-  messages: Message[];
-}
+import { getEventMessages, sendMessage, markMessagesAsRead, Message } from "@/utils/messageUtils";
+import { supabase } from "@/lib/supabaseClient";
 
 export default function OpenMessagePage() {
   const router = useRouter();
   const params = useParams();
-  const conversationId = params.id as string;
+  const eventId = params.id as string;
   
-  const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [messageText, setMessageText] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [eventInfo, setEventInfo] = useState<{
+    title: string;
+    promoter_name: string;
+    participants: number;
+  } | null>(null);
 
-  // Load conversation data - first try sessionStorage, then fallback to mock data
+  // Load conversation data
   useEffect(() => {
-    // Try to get contact info from sessionStorage (from search message page)
-    const storedContact = sessionStorage.getItem('selectedChatContact');
-    let contactInfo = null;
-    
-    if (storedContact) {
+    const loadConversation = async () => {
       try {
-        contactInfo = JSON.parse(storedContact);
+        // Get current user
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) {
+          console.error('Error getting user:', authError);
+          setLoading(false);
+          return;
+        }
+
+        setCurrentUserId(user.id);
+
+        // Get event info
+        const { data: event, error: eventError } = await supabase
+          .from('posts')
+          .select(`
+            title,
+            promoter_id,
+            profiles!posts_promoter_id_fkey(
+              full_name
+            )
+          `)
+          .eq('id', eventId)
+          .single();
+
+        if (eventError) {
+          console.error('Error fetching event:', eventError);
+          setLoading(false);
+          return;
+        }
+
+        // Get participant count
+        const { count: participantCount, error: countError } = await supabase
+          .from('message_participants')
+          .select('*', { count: 'exact', head: true })
+          .eq('event_id', eventId);
+
+        setEventInfo({
+          title: event.title,
+          promoter_name: event.profiles?.full_name || 'Unknown',
+          participants: participantCount || 0
+        });
+
+        // Load messages
+        const eventMessages = await getEventMessages(eventId, user.id);
+        setMessages(eventMessages);
+
+        // Mark messages as read
+        await markMessagesAsRead(eventId, user.id);
+
       } catch (error) {
-        console.error('Error parsing stored contact:', error);
+        console.error('Error loading conversation:', error);
+      } finally {
+        setLoading(false);
       }
+    };
+
+    if (eventId) {
+      loadConversation();
     }
+  }, [eventId]);
 
-    const mockConversations: Conversation[] = [
-      {
-        id: "1",
-        name: contactInfo?.name || "Alex Rodriguez",
-        avatar: contactInfo?.avatar || "AR",
-        category: contactInfo?.category || "Boxer",
-        isOnline: contactInfo?.isOnline ?? true,
-        messages: [
-          {
-            id: "1",
-            text: "Hi! Thanks for reaching out about the boxing event.",
-            timestamp: "10:30 AM",
-            sender: "talent",
-            isRead: true
-          },
-          {
-            id: "2",
-            text: "I'm very interested in participating. Can you tell me more about the venue?",
-            timestamp: "10:32 AM",
-            sender: "talent",
-            isRead: true
-          },
-          {
-            id: "3",
-            text: "Absolutely! It's at Madison Square Garden, capacity of 20,000. The event is scheduled for March 15th.",
-            timestamp: "10:35 AM",
-            sender: "promoter",
-            isRead: true
-          },
-          {
-            id: "4",
-            text: "That sounds amazing! What's the payment structure?",
-            timestamp: "10:37 AM",
-            sender: "talent",
-            isRead: true
-          },
-          {
-            id: "5",
-            text: "We're offering $5,000 base pay plus 10% of ticket sales. Does that work for you?",
-            timestamp: "10:40 AM",
-            sender: "promoter",
-            isRead: true
-          },
-          {
-            id: "6",
-            text: "Thanks for the opportunity! I'm excited to perform at your venue.",
-            timestamp: "2m",
-            sender: "talent",
-            isRead: false
-          }
-        ]
-      },
-      {
-        id: "2",
-        name: "Sarah Johnson",
-        avatar: "SJ",
-        category: "Comedian",
-        isOnline: false,
-        messages: [
-          {
-            id: "1",
-            text: "Hey Sarah! I saw your latest comedy show and loved it.",
-            timestamp: "9:15 AM",
-            sender: "promoter",
-            isRead: true
-          },
-          {
-            id: "2",
-            text: "Thank you! I'm glad you enjoyed it. Are you interested in booking me for an event?",
-            timestamp: "9:20 AM",
-            sender: "talent",
-            isRead: true
-          },
-          {
-            id: "3",
-            text: "Yes! We have a corporate event coming up and think you'd be perfect.",
-            timestamp: "9:25 AM",
-            sender: "promoter",
-            isRead: true
-          },
-          {
-            id: "4",
-            text: "What time should I arrive for sound check?",
-            timestamp: "1h",
-            sender: "talent",
-            isRead: false
-          }
-        ]
-      }
-    ];
-
-    const foundConversation = mockConversations.find(conv => conv.id === conversationId);
-    setConversation(foundConversation || null);
-  }, [conversationId]);
-
-  const handleSendMessage = () => {
-    if (messageText.trim() && conversation) {
-      const newMessage: Message = {
-        id: Date.now().toString(),
-        text: messageText.trim(),
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        sender: 'promoter',
-        isRead: false
-      };
-
-      setConversation(prev => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          messages: [...prev.messages, newMessage]
-        };
-      });
-
-      setMessageText("");
+  const handleSendMessage = async () => {
+    if (messageText.trim() && currentUserId && eventId) {
+      setSending(true);
       
-      // Simulate typing indicator
-      setIsTyping(true);
-      setTimeout(() => {
-        setIsTyping(false);
-      }, 2000);
+      try {
+        const newMessage = await sendMessage(eventId, currentUserId, messageText.trim());
+        
+        if (newMessage) {
+          setMessages(prev => [...prev, newMessage]);
+          setMessageText("");
+          
+          // Dispatch notification event for other participants
+          window.dispatchEvent(new CustomEvent('messageSent', {
+            detail: { eventId, message: newMessage }
+          }));
+        }
+      } catch (error) {
+        console.error('Error sending message:', error);
+      } finally {
+        setSending(false);
+      }
     }
   };
 
@@ -172,34 +115,53 @@ export default function OpenMessagePage() {
   };
 
   const renderMessage = (message: Message) => {
-    const isPromoter = message.sender === 'promoter';
+    const isCurrentUser = message.sender_id === currentUserId;
+    const formatTime = (timestamp: string) => {
+      return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
     
     return (
       <div
         key={message.id}
-        className={`flex ${isPromoter ? 'justify-end' : 'justify-start'} mb-4`}
+        className={`flex ${isCurrentUser ? 'justify-end' : 'justify-start'} mb-4`}
       >
         <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-          isPromoter
+          isCurrentUser
             ? 'bg-button-red text-white'
             : 'bg-input-background text-text-primary'
         }`}>
-          <p className="text-sm">{message.text}</p>
+          {!isCurrentUser && (
+            <p className="text-xs font-semibold mb-1 opacity-70">
+              {message.sender_name}
+            </p>
+          )}
+          <p className="text-sm">{message.message_text}</p>
           <p className={`text-xs mt-1 ${
-            isPromoter ? 'text-white opacity-70' : 'text-text-secondary'
+            isCurrentUser ? 'text-white opacity-70' : 'text-text-secondary'
           }`}>
-            {message.timestamp}
+            {formatTime(message.created_at)}
           </p>
         </div>
       </div>
     );
   };
 
-  if (!conversation) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-background text-text-primary flex items-center justify-center">
         <div className="text-center">
-          <h2 className="text-text-primary font-bold text-lg mb-2">Conversation not found</h2>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-button-red mx-auto mb-4"></div>
+          <p className="text-text-secondary">Loading conversation...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!eventInfo) {
+    return (
+      <div className="min-h-screen bg-background text-text-primary flex items-center justify-center">
+        <div className="text-center">
+          <h2 className="text-text-primary font-bold text-lg mb-2">Event not found</h2>
           <button
             onClick={() => router.back()}
             className="text-button-red hover:text-button-red-hover transition-colors"
@@ -227,16 +189,15 @@ export default function OpenMessagePage() {
           
           <div className="relative">
             <div className="w-10 h-10 bg-button-red rounded-full flex items-center justify-center text-white font-semibold text-sm">
-              {conversation.avatar}
+              {eventInfo.title.charAt(0).toUpperCase()}
             </div>
-            {conversation.isOnline && (
-              <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-background rounded-full"></div>
-            )}
           </div>
           
           <div>
-            <h1 className="text-text-primary font-semibold text-base">{conversation.name}</h1>
-            <p className="text-text-secondary text-sm">{conversation.category}</p>
+            <h1 className="text-text-primary font-semibold text-base">{eventInfo.title}</h1>
+            <p className="text-text-secondary text-sm">
+              Posted by {eventInfo.promoter_name} • {eventInfo.participants} participant{eventInfo.participants !== 1 ? 's' : ''}
+            </p>
           </div>
         </div>
 
@@ -252,17 +213,12 @@ export default function OpenMessagePage() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4">
-        {conversation.messages.map(renderMessage)}
-        
-        {/* Typing indicator */}
-        {isTyping && (
-          <div className="flex justify-start mb-4">
-            <div className="bg-input-background text-text-primary px-4 py-2 rounded-lg">
-              <div className="flex space-x-1">
-                <div className="w-2 h-2 bg-text-secondary rounded-full animate-bounce"></div>
-                <div className="w-2 h-2 bg-text-secondary rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                <div className="w-2 h-2 bg-text-secondary rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-              </div>
+        {messages.length > 0 ? (
+          messages.map(renderMessage)
+        ) : (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center">
+              <p className="text-text-secondary text-sm">No messages yet. Start the conversation!</p>
             </div>
           </div>
         )}
@@ -295,9 +251,9 @@ export default function OpenMessagePage() {
           
           <button
             onClick={handleSendMessage}
-            disabled={!messageText.trim()}
+            disabled={!messageText.trim() || sending}
             className={`p-2 rounded-full transition-colors ${
-              messageText.trim()
+              messageText.trim() && !sending
                 ? "bg-button-red text-white hover:bg-button-red-hover"
                 : "bg-input-background text-text-secondary cursor-not-allowed"
             }`}

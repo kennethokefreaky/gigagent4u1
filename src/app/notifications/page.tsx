@@ -32,52 +32,83 @@ export default function NotificationsPage() {
 
   // Check if user needs verification and show modal
   useEffect(() => {
-    const storedUserType = localStorage.getItem('userType');
-    const storedTalentCategories = localStorage.getItem('talentCategories');
-    const storedVerificationSkipped = localStorage.getItem('verificationSkipped');
-    
-    if (storedUserType === "talent" && storedTalentCategories) {
+    const checkVerificationStatus = async () => {
       try {
-        const categories = JSON.parse(storedTalentCategories);
-        const fightingSports = ['Boxer', 'MMA', 'Wrestler'];
-        const hasFightingSports = categories.some((cat: string) => fightingSports.includes(cat));
+        const { supabase } = await import('@/lib/supabaseClient');
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
         
+        if (authError || !user) {
+          return;
+        }
+
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('role, talent_categories, verification_status')
+          .eq('id', user.id)
+          .single();
+
+        if (profileError || !profile) {
+          return;
+        }
+
         // Show verification modal if user has fighting sports and skipped verification
-        if (hasFightingSports && storedVerificationSkipped === 'true') {
-          setNeedsVerification(true);
-          setShowVerificationModal(true);
+        if (profile.role === "talent" && profile.talent_categories && profile.verification_status === 'skipped') {
+          const fightingSports = ['Boxer', 'MMA', 'Wrestler'];
+          const hasFightingSports = profile.talent_categories.some((cat: string) => fightingSports.includes(cat));
+          
+          if (hasFightingSports) {
+            setNeedsVerification(true);
+            setShowVerificationModal(true);
+          }
         }
       } catch (error) {
-        console.error('Error parsing talent categories in NotificationsPage:', error);
+        console.error('Error checking verification status in NotificationsPage:', error);
       }
-    }
+    };
+
+    checkVerificationStatus();
   }, []);
 
   // Handle verification modal
-  const handleGetVerified = () => {
-    const storedUserType = localStorage.getItem('userType');
-    const storedTalentCategories = localStorage.getItem('talentCategories');
-    const name = localStorage.getItem('name') || 'User';
-    
-    // Mark that user took action on the verification modal
-    console.log('Notifications: User clicked "Get Verified" - setting verificationModalDismissed = true');
-    localStorage.setItem('verificationModalDismissed', 'true');
-    
-    // Parse talent categories from JSON array to comma-separated string
-    let rolesParam = '';
-    if (storedTalentCategories) {
-      try {
-        const categories = JSON.parse(storedTalentCategories);
-        rolesParam = categories.join(',');
-        console.log('Notifications: Parsed talent categories for verifyid:', categories, '->', rolesParam);
-      } catch (error) {
-        console.error('Error parsing talent categories in notifications:', error);
-        rolesParam = storedTalentCategories; // Fallback to raw string
+  const handleGetVerified = async () => {
+    try {
+      const { supabase } = await import('@/lib/supabaseClient');
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        console.error("No authenticated user for verification:", authError);
+        return;
       }
+
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('talent_categories, full_name')
+        .eq('id', user.id)
+        .single();
+
+      if (profileError || !profile) {
+        console.error("Error loading profile for verification:", profileError);
+        return;
+      }
+
+      // Mark that user took action on the verification modal
+      console.log('Notifications: User clicked "Get Verified" - setting verificationModalDismissed = true');
+      localStorage.setItem('verificationModalDismissed', 'true');
+      
+      // Parse talent categories from array to comma-separated string
+      let rolesParam = '';
+      if (profile.talent_categories && profile.talent_categories.length > 0) {
+        rolesParam = profile.talent_categories.join(',');
+        console.log('Notifications: Parsed talent categories for verifyid:', profile.talent_categories, '->', rolesParam);
+      }
+      
+      const name = profile.full_name || 'User';
+      
+      // Navigate to verifyid page with proper parameters
+      router.push(`/verifyid?name=${encodeURIComponent(name)}&roles=${encodeURIComponent(rolesParam)}&country=United States`);
+    } catch (error) {
+      console.error('Error in handleGetVerified:', error);
     }
-    
-    // Navigate to verifyid page with proper parameters
-    router.push(`/verifyid?name=${encodeURIComponent(name)}&roles=${encodeURIComponent(rolesParam)}&country=United States`);
   };
 
   const handleCloseVerificationModal = () => {
@@ -104,15 +135,28 @@ export default function NotificationsPage() {
     // Handle specific actions
     if (notification.type === 'first_event') {
       triggerConfetti();
-      router.push('/talentlist');
+      router.push('/promotertalentlist');
+    } else if (notification.type === 'event_posted') {
+      router.push('/gigagent4u');
+    } else if (notification.type === 'talent_accepted') {
+      router.push('/promotertalentlist');
     } else if (notification.type === 'new_message') {
       router.push('/messages');
-    } else if (notification.type === 'location_based') {
+    } else if (notification.type === 'location_based' || notification.type === 'breakfast_reminder' || notification.type === 'lunch_reminder' || notification.type === 'dinner_reminder') {
       // Store the search term and navigate to map
       if (notification.message.includes('McDonald')) {
         sessionStorage.setItem('mapSearch', 'McDonald\'s breakfast');
       } else if (notification.message.includes('Club Paradise')) {
         sessionStorage.setItem('mapSearch', 'Club Paradise');
+      } else if (notification.type === 'breakfast_reminder') {
+        sessionStorage.setItem('mapSearch', 'breakfast restaurants');
+        sessionStorage.setItem('mealTime', 'breakfast');
+      } else if (notification.type === 'lunch_reminder') {
+        sessionStorage.setItem('mapSearch', 'lunch restaurants');
+        sessionStorage.setItem('mealTime', 'lunch');
+      } else if (notification.type === 'dinner_reminder') {
+        sessionStorage.setItem('mapSearch', 'dinner restaurants');
+        sessionStorage.setItem('mealTime', 'dinner');
       }
       router.push('/map');
     }

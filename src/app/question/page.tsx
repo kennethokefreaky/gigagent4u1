@@ -2,11 +2,12 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
 
 function QuestionPageContent() {
   const router = useRouter();
   const params = useSearchParams();
-  const name = params.get("name") || "User";
+  const name = params?.get("name") || "User";
   const [role, setRole] = useState<string | null>(null);
   const [categories, setCategories] = useState<string[]>([]);
   const [customCategory, setCustomCategory] = useState<string>("");
@@ -91,30 +92,73 @@ function QuestionPageContent() {
     return true;
   };
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     // Check if all required selections are made
     if (isFormValid()) {
-      // Store user type in localStorage for gigagent4u page
-      const userType = role === "Talent" ? "talent" : "promoter";
-      localStorage.setItem('userType', userType);
-      
-      // Store talent categories in localStorage for profile page
-      if (role === "Talent" && categories.length > 0) {
-        localStorage.setItem('talentCategories', JSON.stringify(categories));
+      try {
+        // Get current user
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        
+        if (authError || !user) {
+          console.error("No authenticated user:", authError);
+          return;
+        }
+
+        // Save to localStorage
+        const userType = role === "Talent" ? "talent" : "promoter";
+        localStorage.setItem('userType', userType);
+        
+        if (role === "Talent" && categories.length > 0) {
+          localStorage.setItem('talentCategories', JSON.stringify(categories));
+        }
+        
+        if (role === "Promoter" && promoterTypes.length > 0) {
+          localStorage.setItem('promoterTypes', JSON.stringify(promoterTypes));
+        }
+
+        // Save role and categories to Supabase profiles table
+        const updates: {
+          role: string;
+          updated_at: string;
+          talent_categories?: string[];
+          promoter_types?: string[];
+        } = {
+          role: userType,
+          updated_at: new Date().toISOString(),
+        };
+
+        if (role === "Talent" && categories.length > 0) {
+          updates.talent_categories = categories;
+        } else if (role === "Promoter" && promoterTypes.length > 0) {
+          updates.promoter_types = promoterTypes;
+        }
+
+        const { error: updateError } = await supabase
+          .from('profiles')
+          .update(updates)
+          .eq('id', user.id);
+
+        if (updateError) {
+          console.error("Error updating profile:", updateError);
+        } else {
+          console.log("Profile updated successfully");
+        }
+        
+        // Navigate directly to verification flow with selected role and categories/types
+        let rolesQuery = "";
+        
+        if (role === "Talent" && categories.length > 0) {
+          // Pass all selected categories as comma-separated string
+          rolesQuery = categories.join(",");
+        } else if (role === "Promoter" && promoterTypes.length > 0) {
+          // Keep as "Promoter" for business license
+          rolesQuery = "Promoter";
+        }
+        
+        router.push(`/infoscreen?roles=${rolesQuery}&name=${encodeURIComponent(name)}`);
+      } catch (error) {
+        console.error('Error in handleContinue:', error);
       }
-      
-      // Navigate directly to verification flow with selected role and categories/types
-      let rolesQuery = "";
-      
-      if (role === "Talent" && categories.length > 0) {
-        // Pass all selected categories as comma-separated string
-        rolesQuery = categories.join(",");
-      } else if (role === "Promoter" && promoterTypes.length > 0) {
-        // Keep as "Promoter" for business license
-        rolesQuery = "Promoter";
-      }
-      
-      router.push(`/infoscreen?roles=${rolesQuery}&name=${encodeURIComponent(name)}`);
     }
   };
 

@@ -7,9 +7,9 @@ import Link from "next/link";
 function VerifyIDContent() {
   const router = useRouter();
   const params = useSearchParams();
-  const country = params.get("country") || "United States";
-  const rolesParam = params.get("roles") || "";
-  const name = params.get("name") || "User";
+  const country = params?.get("country") || "United States";
+  const rolesParam = params?.get("roles") || "";
+  const name = params?.get("name") || "User";
 
   const [idOptions, setIdOptions] = useState<string[]>([]);
   const [isAthleticRole, setIsAthleticRole] = useState(false);
@@ -52,30 +52,49 @@ function VerifyIDContent() {
     setIdOptions(finalOptions);
   }, [rolesParam]);
 
-  const handleSkip = () => {
-    // Store that verification was skipped
-    console.log('VerifyID: User clicked skip button - setting verificationSkipped = true');
-    localStorage.setItem('verificationSkipped', 'true');
-    
-    // Verify it was set
-    const checkValue = localStorage.getItem('verificationSkipped');
-    console.log('VerifyID: verificationSkipped set to:', checkValue);
-    
-    // Determine the primary role for location page
-    let primaryRole = "Talent"; // Default
-    if (rolesParam) {
-      const roleList = rolesParam.split(",").filter(role => role.trim() !== "");
-      if (roleList.includes("Promoter")) {
-        primaryRole = "Promoter";
-      } else if (roleList.length > 0) {
-        // If it's a specific talent category, still use "Talent"
-        primaryRole = "Talent";
+  const handleSkip = async () => {
+    try {
+      // Save to localStorage
+      console.log('VerifyID: User clicked skip button - setting verificationSkipped = true');
+      localStorage.setItem('verificationSkipped', 'true');
+      
+      // Verify it was set
+      const checkValue = localStorage.getItem('verificationSkipped');
+      console.log('VerifyID: verificationSkipped set to:', checkValue);
+      
+      // Determine the primary role for location page
+      let primaryRole = "Talent"; // Default
+      if (rolesParam) {
+        const roleList = rolesParam.split(",").filter(role => role.trim() !== "");
+        if (roleList.includes("Promoter")) {
+          primaryRole = "Promoter";
+        } else if (roleList.length > 0) {
+          // If it's a specific talent category, still use "Talent"
+          primaryRole = "Talent";
+        }
       }
+      
+      console.log('VerifyID: Navigating to location page with role:', primaryRole);
+      // Navigate to location page after skipping verification
+      router.push(`/location?role=${encodeURIComponent(primaryRole)}`);
+    } catch (error) {
+      console.error('Error in handleSkip:', error);
+      // Fallback to localStorage
+      localStorage.setItem('verificationSkipped', 'true');
+      
+      // Determine the primary role for location page
+      let primaryRole = "Talent"; // Default
+      if (rolesParam) {
+        const roleList = rolesParam.split(",").filter(role => role.trim() !== "");
+        if (roleList.includes("Promoter")) {
+          primaryRole = "Promoter";
+        } else if (roleList.length > 0) {
+          primaryRole = "Talent";
+        }
+      }
+      
+      router.push(`/location?role=${encodeURIComponent(primaryRole)}`);
     }
-    
-    console.log('VerifyID: Navigating to location page with role:', primaryRole);
-    // Navigate to location page after skipping verification
-    router.push(`/location?role=${encodeURIComponent(primaryRole)}`);
   };
 
   return (

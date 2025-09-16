@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabaseClient";
 
 interface GoalSectionProps {
   userType: string;
@@ -11,96 +12,147 @@ export default function GoalSection({ userType }: GoalSectionProps) {
   const [firstEventPosted, setFirstEventPosted] = useState(false);
   const [profileCompleted, setProfileCompleted] = useState(false);
   const [talentInvited, setTalentInvited] = useState(false);
+  const [, setCurrentUserId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
+  // Get current user and load user-specific goals
   useEffect(() => {
-    // Check if first event has been posted
-    const posted = sessionStorage.getItem('firstEventPosted');
-    if (posted === 'true') {
-      setFirstEventPosted(true);
-    }
-
-    // Check if profile is completed (for both talent and promoter users)
-    const checkProfileCompletion = () => {
-      const savedProfile = localStorage.getItem('savedProfile');
-      if (savedProfile) {
-        try {
-          const profileData = JSON.parse(savedProfile);
-          
-          if (userType === "talent") {
-            // For talents: Check if essential fields are filled (excluding rating and comments)
-            const hasName = profileData.fullName && profileData.fullName.trim() !== '';
-            const hasBio = profileData.bio && profileData.bio.trim() !== '';
-            
-            // Profile is complete if at least name and bio are filled
-            if (hasName && hasBio) {
-              setProfileCompleted(true);
-            } else {
-              setProfileCompleted(false);
-            }
-          } else if (userType === "promoter") {
-            // For promoters: Check if essential fields are filled (excluding rating and comments)
-            const hasName = profileData.fullName && profileData.fullName.trim() !== '';
-            const hasBio = profileData.bio && profileData.bio.trim() !== '';
-            
-            // Profile is complete if at least name and bio are filled
-            if (hasName && hasBio) {
-              setProfileCompleted(true);
-            } else {
-              setProfileCompleted(false);
-            }
-          }
-        } catch (error) {
-          console.error('Error parsing saved profile:', error);
-          setProfileCompleted(false);
+    const loadUserGoals = async () => {
+      try {
+        // Get current user
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        
+        if (authError || !user) {
+          console.error("No authenticated user:", authError);
+          setLoading(false);
+          return;
         }
-      } else {
-        setProfileCompleted(false);
+
+        setCurrentUserId(user.id);
+
+        // Load user's goal progress from profiles table
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+
+        if (profileError) {
+          console.error("Error loading profile:", profileError);
+          setLoading(false);
+          return;
+        }
+
+        if (profile) {
+          // Check profile completion based on user data
+          const hasName = profile.full_name && profile.full_name.trim() !== '';
+          const hasBio = profile.bio && profile.bio.trim() !== '';
+          setProfileCompleted(hasName && hasBio);
+
+          // Check if user has posted events (for promoters)
+          if (userType === "promoter") {
+            const { data: posts, error: postsError } = await supabase
+              .from('posts')
+              .select('id')
+              .eq('promoter_id', user.id)
+              .limit(1);
+
+            if (!postsError && posts && posts.length > 0) {
+              setFirstEventPosted(true);
+            }
+
+            // Check if user has accepted talents
+            const acceptedTalents = profile.accepted_talents || [];
+            setTalentInvited(acceptedTalents.length > 0);
+          }
+        }
+
+        setLoading(false);
+      } catch (error) {
+        console.error('Error loading user goals:', error);
+        setLoading(false);
       }
     };
 
-    // Check if talent has been invited (for promoter users)
-    const checkTalentInvitation = () => {
-      if (userType === "promoter") {
-        const invitedTalents = localStorage.getItem('invitedTalents');
-        if (invitedTalents) {
-          try {
-            const talents = JSON.parse(invitedTalents);
-            setTalentInvited(talents.length > 0);
-          } catch (error) {
-            console.error('Error parsing invited talents:', error);
-            setTalentInvited(false);
-          }
-        } else {
-          setTalentInvited(false);
-        }
-      }
+    loadUserGoals();
+
+    // Listen for custom events to refresh goals
+    const handleGoalUpdate = () => {
+      loadUserGoals();
     };
 
-    checkProfileCompletion();
-    checkTalentInvitation();
-
-    // Listen for changes to localStorage
-    const handleStorageChange = () => {
-      checkProfileCompletion();
-      checkTalentInvitation();
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-    
-    // Also listen for custom events when profile is saved from same tab
-    window.addEventListener('profileSaved', handleStorageChange);
-    
-    // Listen for talent invitation events
-    window.addEventListener('talentInvited', handleStorageChange);
+    window.addEventListener('profileSaved', handleGoalUpdate);
+    window.addEventListener('talentInvited', handleGoalUpdate);
+    window.addEventListener('talentAccepted', handleGoalUpdate);
+    window.addEventListener('postCreated', handleGoalUpdate);
 
     return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('profileSaved', handleStorageChange);
-      window.removeEventListener('talentInvited', handleStorageChange);
+      window.removeEventListener('profileSaved', handleGoalUpdate);
+      window.removeEventListener('talentInvited', handleGoalUpdate);
+      window.removeEventListener('talentAccepted', handleGoalUpdate);
+      window.removeEventListener('postCreated', handleGoalUpdate);
     };
   }, [userType]);
 
-  if (!isVisible) return null;
+  // Trigger confetti when all promoter goals are completed
+  useEffect(() => {
+    if (userType === "promoter" && profileCompleted && firstEventPosted && talentInvited) {
+      // Trigger confetti effect
+      const triggerConfetti = () => {
+        // Create confetti particles
+        const colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57', '#ff9ff3'];
+        const confettiCount = 150;
+        
+        for (let i = 0; i < confettiCount; i++) {
+          setTimeout(() => {
+            const confetti = document.createElement('div');
+            confetti.style.position = 'fixed';
+            confetti.style.width = '10px';
+            confetti.style.height = '10px';
+            confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+            confetti.style.left = Math.random() * 100 + 'vw';
+            confetti.style.top = '-10px';
+            confetti.style.borderRadius = '50%';
+            confetti.style.pointerEvents = 'none';
+            confetti.style.zIndex = '9999';
+            confetti.style.animation = `confetti-fall ${Math.random() * 3 + 2}s linear forwards`;
+            
+            document.body.appendChild(confetti);
+            
+            // Remove confetti after animation
+            setTimeout(() => {
+              if (confetti.parentNode) {
+                confetti.parentNode.removeChild(confetti);
+              }
+            }, 5000);
+          }, i * 10);
+        }
+      };
+
+      // Add CSS animation for confetti
+      if (!document.getElementById('confetti-styles')) {
+        const style = document.createElement('style');
+        style.id = 'confetti-styles';
+        style.textContent = `
+          @keyframes confetti-fall {
+            0% {
+              transform: translateY(-100vh) rotate(0deg);
+              opacity: 1;
+            }
+            100% {
+              transform: translateY(100vh) rotate(720deg);
+              opacity: 0;
+            }
+          }
+        `;
+        document.head.appendChild(style);
+      }
+
+      triggerConfetti();
+    }
+  }, [userType, profileCompleted, firstEventPosted, talentInvited]);
+
+  if (!isVisible || loading) return null;
 
   // Calculate progress based on user type
   let progress = 0;
@@ -177,7 +229,7 @@ export default function GoalSection({ userType }: GoalSectionProps) {
               </div>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-white text-sm">Invite talent</span>
+              <span className="text-white text-sm">Accept talent</span>
               <div className="flex items-center space-x-2">
                 {inviteTalentProgress === 100 && (
                   <svg className="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">

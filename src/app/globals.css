@@ -7,7 +7,7 @@
   --surface: #2A2A2A;
   --text-primary: #FFFFFF;
   --text-secondary: #A0A0A0;
-  --input-background: #2C2C2C;
+  --input-background: #0F0F0F;
   --input-icon: #B0B0B0;
   --button-red: #FF2C2C;
   --button-red-hover: #E02525;
@@ -115,13 +115,41 @@ body {
   .bottom-sheet {
     max-height: calc(var(--vh, 1vh) * 80);
     max-height: calc(100vh - 20vh); /* Fallback for browsers without CSS custom properties */
-  }
-  
-  /* Additional mobile-specific adjustments */
-  .bottom-sheet {
     /* Ensure the sheet doesn't get cut off by keyboard */
     margin-bottom: env(keyboard-inset-height, 0px);
     margin-bottom: 0; /* Fallback */
+    /* Use safe area for better positioning */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  
+  /* Bottom sheet with text area - special handling for keyboard */
+  .bottom-sheet-with-textarea {
+    max-height: calc(100vh - 20vh);
+    margin-bottom: env(keyboard-inset-height, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    /* Ensure content is scrollable when keyboard appears */
+    overflow-y: auto;
+    /* Prevent the sheet from being pushed up too much */
+    transform: translateY(0);
+    transition: transform 0.3s ease-in-out;
+  }
+  
+  /* When keyboard is visible, adjust positioning */
+  @supports (height: 100dvh) {
+    .bottom-sheet-with-textarea {
+      max-height: calc(100dvh - 20vh);
+    }
+  }
+  
+  /* Keyboard visible state */
+  .keyboard-visible .bottom-sheet-with-textarea {
+    max-height: calc(100vh - 50vh);
+    transform: translateY(-10vh);
+  }
+  
+  /* Ensure text areas are visible when keyboard appears */
+  .keyboard-visible .bottom-sheet-with-textarea textarea {
+    margin-bottom: 20px;
   }
 }
 
@@ -129,6 +157,27 @@ body {
 @media screen and (min-width: 769px) and (max-width: 1024px) {
   .bottom-sheet {
     max-height: 70vh;
+  }
+}
+
+/* Prevent zoom on input focus for mobile */
+@media screen and (max-width: 768px) {
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="tel"],
+  input[type="url"],
+  input[type="search"],
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+  
+  /* Ensure text areas in bottom sheets are properly positioned */
+  .bottom-sheet-with-textarea textarea {
+    font-size: 16px !important;
+    /* Prevent zoom on focus */
+    transform: translateZ(0);
   }
 }
 
