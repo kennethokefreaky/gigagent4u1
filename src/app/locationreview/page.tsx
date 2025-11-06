@@ -24,27 +24,12 @@ function LocationReviewContent() {
   const [mapError, setMapError] = useState<string | null>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   
-  // Get coordinates from URL params or localStorage
+  // Get coordinates from URL params
   const getCoordinates = () => {
     if (latParam && lngParam) {
       return { lat: parseFloat(latParam), lng: parseFloat(lngParam) };
     }
-    
-    // Try localStorage
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('userLocation');
-        if (stored) {
-          const location = JSON.parse(stored);
-          if (location.lat && location.lng) {
-            return { lat: location.lat, lng: location.lng };
-          }
-        }
-      } catch (error) {
-        console.error('Error parsing stored location:', error);
-      }
-    }
-    
+
     // Fallback to NYC
     return { lat: 40.7128, lng: -74.0060 };
   };
@@ -109,6 +94,46 @@ function LocationReviewContent() {
   };
 
   const stateAbbreviation = state ? getStateAbbreviation(state) : "";
+
+  // Save location to Supabase profile
+  const handleContinue = async () => {
+    try {
+      const { supabase } = await import('@/lib/supabaseClient');
+      
+      // Get current user
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        console.error('No authenticated user:', authError);
+        router.push("/gigagent4u");
+        return;
+      }
+
+      // Format location as "City, State"
+      const locationString = `${city}${stateAbbreviation ? `, ${stateAbbreviation}` : ''}`;
+      
+      // Update user's profile with location
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ 
+          location: locationString,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', user.id);
+
+      if (updateError) {
+        console.error('Error updating profile location:', updateError);
+      } else {
+        console.log('Location saved to profile:', locationString);
+      }
+      
+    } catch (error) {
+      console.error('Error saving location:', error);
+    } finally {
+      // Navigate regardless of save success/failure
+      router.push("/gigagent4u");
+    }
+  };
 
   // Initialize Google Maps when script loads
   useEffect(() => {
@@ -189,7 +214,7 @@ function LocationReviewContent() {
         </div>
 
         <button
-          onClick={() => router.push("/gigagent4u")}
+          onClick={handleContinue}
           className="w-full bg-button-red text-white py-4 radius-md font-semibold hover:bg-button-red-hover transition-colors"
         >
           Continue

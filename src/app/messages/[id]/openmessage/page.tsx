@@ -1,24 +1,64 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { getEventMessages, sendMessage, markMessagesAsRead, Message } from "@/utils/messageUtils";
+import { getUnifiedMessages, sendUnifiedMessage, markUnifiedMessagesAsRead, UnifiedMessage } from "@/utils/unifiedMessagingUtils";
 import { supabase } from "@/lib/supabaseClient";
 
 export default function OpenMessagePage() {
   const router = useRouter();
   const params = useParams();
-  const eventId = params.id as string;
+  const chatId = params.id as string;
   
-  const [messages, setMessages] = useState<Message[]>([]);
+  // This page is now only for private chats
+  // Private chat format: talentId-promoterId (both are UUIDs, so we check for 2 UUIDs separated by a dash)
+  const isPrivateChat = chatId.includes('-') && chatId.length > 36; // UUIDs are 36 chars, so private chat will be longer
+  
+  // If it's not a private chat format, redirect to group chat
+  if (!isPrivateChat) {
+    router.push(`/messages/${chatId}/groupchat`);
+    return null;
+  }
+  
+  console.log('🔍 Private chat detection:', { 
+    chatId, 
+    chatIdLength: chatId.length,
+    hasDash: chatId.includes('-'),
+    isPrivateChat
+  });
+  console.log('🔍 DEBUG: Full chatId value:', chatId);
+  console.log('🔍 DEBUG: chatId type:', typeof chatId);
+  
+  const [messages, setMessages] = useState<UnifiedMessage[]>([]);
   const [messageText, setMessageText] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom when messages change
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Auto-scroll to bottom when page loads
+  useEffect(() => {
+    if (!loading && messages.length > 0) {
+      scrollToBottom();
+    }
+  }, [loading, messages.length]);
+
   const [eventInfo, setEventInfo] = useState<{
     title: string;
     promoter_name: string;
+    promoter_email: string;
     participants: number;
+    conversation_type: 'group' | 'private';
+    conversation_title: string;
   } | null>(null);
 
   // Load conversation data
@@ -34,44 +74,72 @@ export default function OpenMessagePage() {
         }
 
         setCurrentUserId(user.id);
-
-        // Get event info
-        const { data: event, error: eventError } = await supabase
-          .from('posts')
-          .select(`
-            title,
-            promoter_id,
-            profiles!posts_promoter_id_fkey(
-              full_name
-            )
-          `)
-          .eq('id', eventId)
+        console.log('🔍 DEBUG: Current User ID:', user.id);
+        console.log('🔍 DEBUG: User ID type:', typeof user.id);
+        console.log('🔍 DEBUG: User ID length:', user.id?.length);
+        
+        console.log('🔍 Loading private chat for chatId:', chatId);
+        console.log('🔍 Current user ID:', user.id);
+        
+        // Handle private chat logic
+        // Extract talentId and promoterId from conversation_id format: private_talentId-promoterId
+        const withoutPrefix = chatId.replace('private_', '');
+        const talentId = withoutPrefix.substring(0, 36);
+        const promoterId = withoutPrefix.substring(37); // Skip the dash at position 36
+        console.log('🔍 Private chat between talent:', talentId, 'and promoter:', promoterId);
+        
+        // Get promoter info
+        const { data: promoter, error: promoterError } = await supabase
+          .from('profiles')
+          .select('full_name, email')
+          .eq('id', promoterId)
           .single();
 
-        if (eventError) {
-          console.error('Error fetching event:', eventError);
+        if (promoterError) {
+          console.error('❌ Error fetching promoter:', promoterError);
           setLoading(false);
           return;
         }
 
-        // Get participant count
-        const { count: participantCount, error: countError } = await supabase
-          .from('message_participants')
-          .select('*', { count: 'exact', head: true })
-          .eq('event_id', eventId);
+        // Determine the best display name with fallbacks
+        let displayName = 'Unknown';
+        if (promoter.full_name) {
+          displayName = promoter.full_name;
+        } else if (promoter.email) {
+          displayName = promoter.email.split('@')[0]; // Use email prefix as fallback
+        }
+
+        console.log('✅ Promoter info fetched:', { displayName, email: promoter.email });
 
         setEventInfo({
-          title: event.title,
-          promoter_name: event.profiles?.full_name || 'Unknown',
-          participants: participantCount || 0
+          title: 'Private Chat',
+          promoter_name: displayName,
+          promoter_email: promoter.email || '',
+          participants: 2,
+          conversation_type: 'private',
+          conversation_title: displayName
         });
 
-        // Load messages
-        const eventMessages = await getEventMessages(eventId, user.id);
-        setMessages(eventMessages);
-
+        // Participants are handled automatically by unified table triggers
+        
+        // Load private chat messages
+        // Convert old chatId format to new unified format
+        // Old format: talentId-promoterId
+        // New format: private_talentId-promoterId
+        const unifiedConversationId = chatId.startsWith('private_') ? chatId : `private_${chatId}`;
+        console.log('🔍 Converting chatId to unified format:', { oldChatId: chatId, newConversationId: unifiedConversationId });
+        
+        const unifiedMessages = await getUnifiedMessages(unifiedConversationId, user.id);
+        setMessages(unifiedMessages);
+        
         // Mark messages as read
-        await markMessagesAsRead(eventId, user.id);
+        try {
+          await markUnifiedMessagesAsRead(unifiedConversationId, user.id);
+        } catch (markReadError) {
+          console.error('Error marking private chat messages as read:', markReadError);
+        }
+        
+        console.log('✅ Private chat setup complete');
 
       } catch (error) {
         console.error('Error loading conversation:', error);
@@ -80,26 +148,29 @@ export default function OpenMessagePage() {
       }
     };
 
-    if (eventId) {
+    if (chatId) {
       loadConversation();
     }
-  }, [eventId]);
+  }, [chatId]);
 
   const handleSendMessage = async () => {
-    if (messageText.trim() && currentUserId && eventId) {
+    if (messageText.trim() && currentUserId) {
       setSending(true);
       
       try {
-        const newMessage = await sendMessage(eventId, currentUserId, messageText.trim());
+        // Convert old chatId format to new unified format
+        const unifiedConversationId = chatId.startsWith('private_') ? chatId : `private_${chatId}`;
+        console.log('🔍 DEBUG: Original chatId:', chatId);
+        console.log('🔍 DEBUG: Unified conversation ID:', unifiedConversationId);
+        
+        // Send unified message
+        const newMessage = await sendUnifiedMessage(unifiedConversationId, 'private', currentUserId, messageText.trim());
         
         if (newMessage) {
           setMessages(prev => [...prev, newMessage]);
           setMessageText("");
           
-          // Dispatch notification event for other participants
-          window.dispatchEvent(new CustomEvent('messageSent', {
-            detail: { eventId, message: newMessage }
-          }));
+          console.log('✅ Private chat message sent successfully');
         }
       } catch (error) {
         console.error('Error sending message:', error);
@@ -109,12 +180,8 @@ export default function OpenMessagePage() {
     }
   };
 
-  const handleVideoCall = () => {
-    // In real app, this would initiate a video call
-    console.log("Starting video call with", conversation?.name);
-  };
 
-  const renderMessage = (message: Message) => {
+  const renderMessage = (message: UnifiedMessage) => {
     const isCurrentUser = message.sender_id === currentUserId;
     const formatTime = (timestamp: string) => {
       return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -174,9 +241,9 @@ export default function OpenMessagePage() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-text-primary flex flex-col">
-      {/* Header */}
-      <div className="bg-surface px-4 py-4 flex items-center justify-between border-b border-text-secondary">
+    <div className="h-screen bg-background text-text-primary flex flex-col">
+      {/* Header - Fixed */}
+      <div className="bg-surface px-4 py-4 flex items-center justify-between border-b border-text-secondary flex-shrink-0">
         <div className="flex items-center space-x-3">
           <button
             onClick={() => router.back()}
@@ -188,33 +255,27 @@ export default function OpenMessagePage() {
           </button>
           
           <div className="relative">
-            <div className="w-10 h-10 bg-button-red rounded-full flex items-center justify-center text-white font-semibold text-sm">
-              {eventInfo.title.charAt(0).toUpperCase()}
+            <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold text-sm bg-blue-500">
+              {eventInfo.promoter_name.charAt(0).toUpperCase()}
             </div>
           </div>
           
           <div>
-            <h1 className="text-text-primary font-semibold text-base">{eventInfo.title}</h1>
+            <h1 className="text-text-primary font-semibold text-base">{eventInfo.conversation_title}</h1>
             <p className="text-text-secondary text-sm">
-              Posted by {eventInfo.promoter_name} • {eventInfo.participants} participant{eventInfo.participants !== 1 ? 's' : ''}
+              Private chat with {eventInfo.promoter_name} • 1-on-1
             </p>
           </div>
         </div>
-
-        <button
-          onClick={handleVideoCall}
-          className="p-2 hover:bg-input-background rounded-full transition-colors"
-        >
-          <svg className="w-6 h-6 text-text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-          </svg>
-        </button>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4">
+      {/* Messages - Scrollable */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 min-h-0">
         {messages.length > 0 ? (
-          messages.map(renderMessage)
+          <>
+            {messages.map(renderMessage)}
+            <div ref={messagesEndRef} />
+          </>
         ) : (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
@@ -224,8 +285,8 @@ export default function OpenMessagePage() {
         )}
       </div>
 
-      {/* Message Composer */}
-      <div className="bg-surface border-t border-text-secondary p-4">
+      {/* Message Composer - Fixed at bottom */}
+      <div className="bg-surface border-t border-text-secondary p-4 flex-shrink-0">
         <div className="flex items-end space-x-3">
           <button className="p-2 hover:bg-input-background rounded-full transition-colors">
             <svg className="w-6 h-6 text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -258,8 +319,8 @@ export default function OpenMessagePage() {
                 : "bg-input-background text-text-secondary cursor-not-allowed"
             }`}
           >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2 12l20 0M12 2l10 10-10 10" />
             </svg>
           </button>
         </div>

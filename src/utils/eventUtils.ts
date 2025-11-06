@@ -14,6 +14,8 @@ export interface EventData {
   createdAt: string;
   status: 'active' | 'completed' | 'cancelled';
   promoterId?: string; // Added for Supabase posts
+  promoterName?: string; // Added for promoter name with fallback
+  promoterEmail?: string; // Added for promoter email
   source?: string; // Added for Supabase posts
 }
 
@@ -69,20 +71,35 @@ export const getAllEvents = (): EventData[] => {
 };
 
 // New function to fetch posts from Supabase
-export const getAllPostsFromSupabase = async (): Promise<EventData[]> => {
+export const getAllPostsFromSupabase = async (userLocation?: { city: string; state: string }): Promise<EventData[]> => {
   try {
     const { supabase } = await import('@/lib/supabaseClient');
-    const { data, error } = await supabase
+    
+    let query = supabase
       .from('posts')
-      .select('*')
+      .select(`
+        *,
+        profiles!posts_promoter_id_fkey(
+          full_name,
+          email
+        )
+      `)
       .order('created_at', { ascending: false });
+
+    // If user location is provided, filter posts by location
+    if (userLocation) {
+      // Filter by city and state in the location field
+      query = query.or(`location.ilike.%${userLocation.city}%,location.ilike.%${userLocation.state}%`);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error('Error fetching posts from Supabase:', error);
       return [];
     }
 
-    // Convert Supabase posts to EventData format
+    // Convert Supabase posts to EventData format with promoter fallbacks
     return data.map(post => ({
       id: post.id,
       selectedTalents: post.talents || [],
@@ -99,6 +116,8 @@ export const getAllPostsFromSupabase = async (): Promise<EventData[]> => {
       createdAt: post.created_at,
       status: 'active' as const,
       promoterId: post.promoter_id,
+      promoterName: post.profiles?.full_name || post.profiles?.email || 'Unknown Promoter',
+      promoterEmail: post.profiles?.email || 'Unknown Email',
       source: post.source
     }));
   } catch (error) {
@@ -110,7 +129,10 @@ export const getAllPostsFromSupabase = async (): Promise<EventData[]> => {
 // Interface for talent user data
 export interface TalentUser {
   id: string;
-  email: string;
+  email?: string; // Make email optional since it might not always be present
+  full_name?: string; // Add full_name field
+  location?: string; // Add location field for talent users
+  profile_image_url?: string; // Add profile_image_url field
   talent_categories: string[];
   verification_status: string;
   created_at: string;
@@ -121,17 +143,70 @@ export interface TalentUser {
 export const getAllTalentUsers = async (): Promise<TalentUser[]> => {
   try {
     const { supabase } = await import('@/lib/supabaseClient');
+    console.log('getAllTalentUsers: Starting to fetch talent users...');
+    
+    // Check if user is authenticated
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    console.log('getAllTalentUsers: Current user:', user);
+    console.log('getAllTalentUsers: Auth error:', authError);
+    
+    // First, let's test if we can query the profiles table at all
+    const { data: allProfiles, error: allProfilesError } = await supabase
+      .from('profiles')
+      .select('id, role, full_name, location, profile_image_url, talent_categories')
+      .limit(5);
+    
+    console.log('getAllTalentUsers: Test query for all profiles:', { allProfiles, allProfilesError });
+    console.log('getAllTalentUsers: All profiles error details:', JSON.stringify(allProfilesError, null, 2));
+    
+    // Test if we can query just the basic structure
+    const { data: basicTest, error: basicError } = await supabase
+      .from('profiles')
+      .select('id, role')
+      .limit(1);
+    
+    console.log('getAllTalentUsers: Basic test query:', { basicTest, basicError });
+    console.log('getAllTalentUsers: Basic error details:', JSON.stringify(basicError, null, 2));
+    
+    // Test if location column now exists
+    const { data: locationTest, error: locationError } = await supabase
+      .from('profiles')
+      .select('id, location')
+      .limit(1);
+    
+    console.log('getAllTalentUsers: Location column test:', { locationTest, locationError });
+    console.log('getAllTalentUsers: Location error details:', JSON.stringify(locationError, null, 2));
+    
+    // Now query for talent users specifically - simplified query without join for now
     const { data, error } = await supabase
       .from('profiles')
-      .select('*')
+      .select(`
+        id, 
+        email,
+        full_name, 
+        location, 
+        profile_image_url, 
+        talent_categories, 
+        verification_status, 
+        created_at, 
+        updated_at
+      `)
       .eq('role', 'talent')
       .order('created_at', { ascending: false });
 
+    console.log('getAllTalentUsers: Supabase query result:', { data, error });
+    console.log('getAllTalentUsers: Error details:', JSON.stringify(error, null, 2));
+
     if (error) {
       console.error('Error fetching talent users from Supabase:', error);
+      console.error('Error message:', error.message);
+      console.error('Error code:', error.code);
+      console.error('Error details:', error.details);
+      console.error('Error hint:', error.hint);
       return [];
     }
 
+    console.log('getAllTalentUsers: Returning data:', data);
     return data || [];
   } catch (error) {
     console.error('Error importing Supabase client:', error);

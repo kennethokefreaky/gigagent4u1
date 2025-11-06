@@ -3,6 +3,9 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getAllTalentUsers, TalentUser } from "../../utils/eventUtils";
+import { createOfferNotification } from "../../utils/offerUtils";
+import { hasOfferBeenSent, hasOfferBeenSentForEvent } from "../../utils/offerManagement";
+import { hasPromoterCreatedEvents, getPromoterLatestEvent, PromoterEvent } from "../../utils/promoterUtils";
 
 interface Talent {
   id: string;
@@ -11,6 +14,7 @@ interface Talent {
   avatar?: string;
   location?: string;
   rating?: number;
+  imageUrl?: string; // Add imageUrl to Talent interface
 }
 
 export default function TalentListPage() {
@@ -18,23 +22,36 @@ export default function TalentListPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [talents, setTalents] = useState<Talent[]>([]);
   const [filteredTalents, setFilteredTalents] = useState<Talent[]>([]);
-  const [invitedTalents, setInvitedTalents] = useState<string[]>([]);
+  const [showOfferBottomSheet, setShowOfferBottomSheet] = useState(false);
+  const [selectedTalentForOffer, setSelectedTalentForOffer] = useState<Talent | null>(null);
+  const [offerAmount, setOfferAmount] = useState("");
+  const [sentOffers, setSentOffers] = useState<Set<string>>(new Set());
+  const [showSuccessPopup, setShowSuccessPopup] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [hasCreatedEvents, setHasCreatedEvents] = useState<boolean>(false);
+  const [showCreateEventModal, setShowCreateEventModal] = useState(false);
+  const [latestEvent, setLatestEvent] = useState<PromoterEvent | null>(null);
 
   // Load real talent data from Supabase
   useEffect(() => {
     const loadTalents = async () => {
       try {
         const talentUsers = await getAllTalentUsers();
+        console.log('TalentList: Fetched talent users:', talentUsers);
+        console.log('TalentList: Number of talent users:', talentUsers.length);
         
         // Convert TalentUser to Talent format
         const talentsData: Talent[] = talentUsers.map((user: TalentUser) => ({
           id: user.id,
-          name: user.email.split('@')[0], // Use email username as name for now
+          name: user.full_name || user.email || `User ${user.id.slice(0, 8)}`, // Use full_name first, then email, then fallback to User ID
           categories: user.talent_categories || [],
-          location: "Location not set", // Default location
-          rating: 4.5 // Default rating
+          location: user.location || "Location not set", // Use actual location if available
+          rating: 4.5, // Default rating
+          imageUrl: user.profile_image_url // Add profile image URL
         }));
         
+        console.log('TalentList: Converted talents data:', talentsData);
+        console.log('TalentList: Number of converted talents:', talentsData.length);
         setTalents(talentsData);
         setFilteredTalents(talentsData);
       } catch (error) {
@@ -47,6 +64,62 @@ export default function TalentListPage() {
     
     loadTalents();
   }, []);
+
+  // Get current user ID and check if they have created events
+  useEffect(() => {
+    const getCurrentUser = async () => {
+      try {
+        const { supabase } = await import('@/lib/supabaseClient');
+        const { data: { user } } = await supabase.auth.getUser();
+        setCurrentUserId(user?.id || null);
+        
+        if (user?.id) {
+          // Check if promoter has created events
+          const hasEvents = await hasPromoterCreatedEvents(user.id);
+          setHasCreatedEvents(hasEvents);
+          
+          if (hasEvents) {
+            // Get the latest event for offer context
+            const latest = await getPromoterLatestEvent(user.id);
+            setLatestEvent(latest);
+          }
+        }
+      } catch (error) {
+        console.error('Error getting current user:', error);
+        setCurrentUserId(null);
+        setHasCreatedEvents(false);
+      }
+    };
+    
+    getCurrentUser();
+  }, []);
+
+  // Load sent offers from Supabase (event-specific)
+  useEffect(() => {
+    const loadSentOffers = async () => {
+      if (!currentUserId || !latestEvent?.id) return;
+      
+      try {
+        const sentOffersSet = new Set<string>();
+        
+        // Check each talent to see if an offer has been sent for this specific event
+        for (const talent of talents) {
+          const hasOffer = await hasOfferBeenSentForEvent(currentUserId, talent.id, latestEvent.id);
+          if (hasOffer) {
+            sentOffersSet.add(talent.id);
+          }
+        }
+        
+        setSentOffers(sentOffersSet);
+      } catch (error) {
+        console.error('Error loading sent offers:', error);
+      }
+    };
+    
+    if (talents.length > 0 && currentUserId && latestEvent?.id) {
+      loadSentOffers();
+    }
+  }, [talents, currentUserId, latestEvent?.id]);
 
   // Filter talents based on search query
   useEffect(() => {
@@ -63,43 +136,102 @@ export default function TalentListPage() {
     }
   }, [searchQuery, talents]);
 
-  // Load invited talents from localStorage on component mount
-  useEffect(() => {
-    const savedInvitedTalents = localStorage.getItem('invitedTalents');
-    if (savedInvitedTalents) {
-      try {
-        const talents = JSON.parse(savedInvitedTalents);
-        setInvitedTalents(talents);
-      } catch (error) {
-        console.error('Error parsing invited talents:', error);
-      }
-    }
-  }, []);
 
-  const handleInviteTalent = (talentId: string) => {
-    setInvitedTalents(prev => {
-      const newInvitedTalents = prev.includes(talentId) 
-        ? prev.filter(id => id !== talentId)
-        : [...prev, talentId];
+  const handleAskOffer = (talent: Talent) => {
+    if (!hasCreatedEvents) {
+      setShowCreateEventModal(true);
+      return;
+    }
+    
+    setSelectedTalentForOffer(talent);
+    setOfferAmount("");
+    setShowOfferBottomSheet(true);
+  };
+
+  const handleSendOffer = async () => {
+    if (!selectedTalentForOffer || !offerAmount || !currentUserId) {
+      return;
+    }
+
+    try {
+      const { supabase } = await import('@/lib/supabaseClient');
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
       
-      // Save to localStorage for goal tracking
-      localStorage.setItem('invitedTalents', JSON.stringify(newInvitedTalents));
+      if (authError || !user) {
+        console.error('No authenticated user:', authError);
+        return;
+      }
+
+      // Use the latest event for the offer
+      const eventTitle = latestEvent?.title || "Recent Event";
+      const eventId = latestEvent?.id;
+
+      // Create offer notification for talent
+      const offerNotification = await createOfferNotification(
+        selectedTalentForOffer.id, // talentId
+        currentUserId, // promoterId
+        offerAmount,
+        eventTitle,
+        eventId
+      );
+
+      if (!offerNotification) {
+        console.error('Failed to create offer notification');
+        return;
+      }
       
-      // Dispatch custom event to notify GoalSection
-      window.dispatchEvent(new CustomEvent('talentInvited'));
+      // Add to sent offers
+      const newSentOffers = new Set(sentOffers);
+      newSentOffers.add(selectedTalentForOffer.id);
+      setSentOffers(newSentOffers);
       
-      return newInvitedTalents;
-    });
+      // Show success popup
+      setShowSuccessPopup(true);
+      setTimeout(() => setShowSuccessPopup(false), 3000);
+
+      // Close bottom sheet
+      setShowOfferBottomSheet(false);
+      setSelectedTalentForOffer(null);
+      setOfferAmount("");
+    } catch (error) {
+      console.error('Error sending offer:', error);
+    }
+  };
+
+  const handleProfileClick = (talentId: string) => {
+    router.push(`/profileview?id=${talentId}`);
   };
 
   const renderTalentCard = (talent: Talent) => (
     <div key={talent.id} className="bg-surface rounded-xl p-4 mb-3">
       <div className="flex items-center space-x-4">
-        {/* Avatar */}
-        <div className="w-12 h-12 bg-input-background rounded-full flex items-center justify-center flex-shrink-0">
-          <svg className="w-6 h-6 text-text-secondary" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
-          </svg>
+        {/* Avatar or Profile Image - Clickable */}
+        <div className="flex flex-col items-center space-y-2">
+          {talent.imageUrl ? (
+            <img 
+              src={talent.imageUrl} 
+              alt={talent.name} 
+              className="w-12 h-12 rounded-full object-cover flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity" 
+              onClick={() => handleProfileClick(talent.id)}
+            />
+          ) : (
+            <div 
+              className="w-12 h-12 bg-input-background rounded-full flex items-center justify-center flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+              onClick={() => handleProfileClick(talent.id)}
+            >
+              <svg className="w-6 h-6 text-text-secondary" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+              </svg>
+            </div>
+          )}
+          
+          {/* Blue "View Profile" Container - Positioned below profile picture */}
+          <div 
+            className="bg-blue-500 text-white text-xs px-2 py-1 rounded-full font-medium shadow-lg text-center cursor-pointer hover:bg-blue-600 transition-colors"
+            onClick={() => handleProfileClick(talent.id)}
+          >
+            View Profile
+          </div>
         </div>
 
         {/* Name and Categories */}
@@ -117,16 +249,24 @@ export default function TalentListPage() {
           )}
         </div>
 
-        {/* Send Invite Button */}
+        {/* Ask Offer Button */}
         <button
-          onClick={() => handleInviteTalent(talent.id)}
+          onClick={() => handleAskOffer(talent)}
+          disabled={sentOffers.has(talent.id) || !hasCreatedEvents}
           className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-            invitedTalents.includes(talent.id)
-              ? "bg-button-red text-white"
+            sentOffers.has(talent.id)
+              ? "bg-gray-400 text-white cursor-not-allowed"
+              : !hasCreatedEvents
+              ? "bg-gray-400 text-white cursor-not-allowed"
               : "bg-button-red text-white hover:bg-button-red-hover"
           }`}
         >
-          {invitedTalents.includes(talent.id) ? "Invited" : "Send Invite"}
+          {sentOffers.has(talent.id) 
+            ? "Sent Offer Already" 
+            : !hasCreatedEvents 
+            ? "Create Event First" 
+            : "Ask Offer"
+          }
         </button>
       </div>
     </div>
@@ -146,7 +286,7 @@ export default function TalentListPage() {
         </button>
         
         <h1 className="text-lg font-semibold text-text-primary">
-          Invite Talent
+          Browse Talent
         </h1>
         
         <div className="w-6"></div>
@@ -196,13 +336,125 @@ export default function TalentListPage() {
         )}
       </div>
 
-      {/* Bottom Summary */}
-      {invitedTalents.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 bg-surface border-t border-text-secondary p-4">
-          <div className="text-center">
-            <p className="text-text-primary font-semibold">
-              {invitedTalents.length} talent{invitedTalents.length > 1 ? 's' : ''} invited
-            </p>
+      {/* Offer Bottom Sheet */}
+      {showOfferBottomSheet && selectedTalentForOffer && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end">
+          <div className="bg-surface w-full rounded-t-xl p-4 min-h-[50vh] bottom-sheet">
+            <div className="flex justify-between items-center mb-4">
+              <button
+                onClick={() => setOfferAmount("")}
+                className="text-button-red font-semibold"
+              >
+                Reset
+              </button>
+              <h3 className="text-subheading font-semibold">Make an Offer</h3>
+              <button
+                onClick={() => setShowOfferBottomSheet(false)}
+                className="text-button-red font-semibold"
+              >
+                Cancel
+              </button>
+            </div>
+            
+            <div className="text-center mb-6">
+              <p className="text-text-secondary text-sm mb-2">Offer amount in USD</p>
+              <p className="text-3xl font-bold text-text-primary">${offerAmount || "0"}</p>
+              <p className="text-text-secondary text-xs mt-2">
+                Making offer to {selectedTalentForOffer.name}
+              </p>
+            </div>
+
+            {/* Numeric Keypad */}
+            <div className="grid grid-cols-3 gap-3 mb-6">
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, ".", 0, "⌫"].map((key) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    if (key === "⌫") {
+                      setOfferAmount(prev => prev.slice(0, -1));
+                    } else if (key === ".") {
+                      if (!offerAmount.includes(".")) {
+                        setOfferAmount(prev => prev + ".");
+                      }
+                    } else {
+                      setOfferAmount(prev => prev + key.toString());
+                    }
+                  }}
+                  className="bg-input-background border border-text-secondary rounded-xl p-4 text-text-primary font-semibold hover:bg-surface transition-colors"
+                >
+                  {key}
+                </button>
+              ))}
+            </div>
+
+            {/* Send Offer Button */}
+            <button
+              onClick={handleSendOffer}
+              disabled={!offerAmount}
+              className="w-full bg-button-red text-white py-4 rounded-xl font-semibold hover:bg-button-red-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Send Offer
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Success Popup */}
+      {showSuccessPopup && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full mx-4 overflow-hidden animate-in fade-in-0 zoom-in-95 duration-200">
+            {/* Success Content */}
+            <div className="p-6 text-center">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">Offer Sent!</h3>
+              <p className="text-gray-600">
+                Your offer has been sent to {selectedTalentForOffer?.name || 'the talent'}.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Event Modal */}
+      {showCreateEventModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full mx-4 overflow-hidden animate-in fade-in-0 zoom-in-95 duration-200">
+            {/* Modal Content */}
+            <div className="p-6 text-center">
+              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">Create Your First Event</h3>
+              <p className="text-gray-600 mb-6">
+                You must create your first post or have an existing post under your event before you can invite talent.
+              </p>
+              
+              {/* Action Buttons */}
+              <div className="space-y-3">
+                <button
+                  onClick={() => {
+                    setShowCreateEventModal(false);
+                    router.push('/create');
+                  }}
+                  className="w-full bg-button-red text-white py-3 rounded-xl font-semibold hover:bg-button-red-hover transition-colors"
+                >
+                  Create Event
+                </button>
+                
+                <button
+                  onClick={() => setShowCreateEventModal(false)}
+                  className="w-full bg-gray-200 text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-300 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

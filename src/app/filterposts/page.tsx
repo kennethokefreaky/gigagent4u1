@@ -22,28 +22,168 @@ export default function FilterPostsPage() {
   });
   const [allEvents, setAllEvents] = useState<any[]>([]);
   const [filteredCount, setFilteredCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [saveTimeout, setSaveTimeout] = useState<NodeJS.Timeout | null>(null);
 
   const talentCategories: TalentCategory[] = ["Boxer", "MMA", "Comedian", "Musician", "Wrestler", "Other"];
   const timeOptions: TimePosted[] = ["Just now", "Last 24 hours", "1+ days", "1 week", "1 month", "1+ months"];
 
-  // Load all events on component mount
+  // Debounced save function to prevent multiple rapid saves
+  const debouncedSaveFilterPreferences = (filterState: FilterState) => {
+    // Clear any existing timeout
+    if (saveTimeout) {
+      clearTimeout(saveTimeout);
+    }
+
+    // Set a new timeout to save after 500ms of no changes
+    const newTimeout = setTimeout(() => {
+      saveFilterPreferences(filterState);
+    }, 500);
+
+    setSaveTimeout(newTimeout);
+  };
+
+  // Save filter preferences to database - BULLETPROOF APPROACH
+  const saveFilterPreferences = async (filterState: FilterState) => {
+    try {
+      const { supabase } = await import('@/lib/supabaseClient');
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        console.log('No authenticated user - saving to sessionStorage instead');
+        sessionStorage.setItem('eventFilters', JSON.stringify(filterState));
+        return;
+      }
+
+      // BULLETPROOF APPROACH: Delete existing record first, then insert new one
+      // This eliminates all constraint conflicts
+      const { error: deleteError } = await supabase
+        .from('filter_preferences')
+        .delete()
+        .eq('user_id', user.id);
+
+      if (deleteError) {
+        console.log('No existing record to delete (this is normal for first time)');
+      }
+
+      // Now insert the new record (no conflicts possible)
+      const { error: insertError } = await supabase
+        .from('filter_preferences')
+        .insert({
+          user_id: user.id,
+          categories: filterState.categories,
+          time_posted: filterState.timePosted,
+          distance: filterState.distance,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+
+      if (insertError) {
+        console.error('Error inserting filter preferences:', insertError);
+        // Fallback to sessionStorage
+        sessionStorage.setItem('eventFilters', JSON.stringify(filterState));
+      } else {
+        console.log('Filter preferences saved successfully');
+      }
+    } catch (error) {
+      console.error('Error saving filter preferences:', error);
+      // Fallback to sessionStorage
+      sessionStorage.setItem('eventFilters', JSON.stringify(filterState));
+    }
+  };
+
+  // Load filter preferences from database
+  const loadFilterPreferences = async (): Promise<FilterState> => {
+    try {
+      const { supabase } = await import('@/lib/supabaseClient');
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        console.log('No authenticated user - loading from sessionStorage instead');
+        const savedFilters = sessionStorage.getItem('eventFilters');
+        if (savedFilters) {
+          return JSON.parse(savedFilters);
+        }
+        return { categories: [], timePosted: null, distance: 50 };
+      }
+
+      const { data, error } = await supabase
+        .from('filter_preferences')
+        .select('categories, time_posted, distance')
+        .eq('user_id', user.id)
+        .single();
+
+      if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
+        console.error('Error loading filter preferences:', error);
+        // Fallback to sessionStorage
+        const savedFilters = sessionStorage.getItem('eventFilters');
+        if (savedFilters) {
+          return JSON.parse(savedFilters);
+        }
+        return { categories: [], timePosted: null, distance: 50 };
+      }
+
+      if (data) {
+        return {
+          categories: data.categories || [],
+          timePosted: data.time_posted || null,
+          distance: data.distance || 50
+        };
+      }
+
+      // No saved preferences, check sessionStorage
+      const savedFilters = sessionStorage.getItem('eventFilters');
+      if (savedFilters) {
+        return JSON.parse(savedFilters);
+      }
+
+      return { categories: [], timePosted: null, distance: 50 };
+    } catch (error) {
+      console.error('Error loading filter preferences:', error);
+      // Fallback to sessionStorage
+      const savedFilters = sessionStorage.getItem('eventFilters');
+      if (savedFilters) {
+        return JSON.parse(savedFilters);
+      }
+      return { categories: [], timePosted: null, distance: 50 };
+    }
+  };
+
+  // Load all events and filter preferences on component mount
   useEffect(() => {
-    const loadEvents = async () => {
+    const loadData = async () => {
+      setLoading(true);
       try {
+        // Load events
         const { getAllPostsFromSupabase } = await import('../../utils/eventUtils');
         const supabaseEvents = await getAllPostsFromSupabase();
         const sessionEvents = getAllEvents();
         const allEvents = [...supabaseEvents, ...sessionEvents];
         setAllEvents(allEvents);
+
+        // Load saved filter preferences
+        const savedFilters = await loadFilterPreferences();
+        setFilters(savedFilters);
       } catch (error) {
-        console.error('Error loading events:', error);
+        console.error('Error loading data:', error);
         const events = getAllEvents();
         setAllEvents(events);
+      } finally {
+        setLoading(false);
       }
     };
     
-    loadEvents();
+    loadData();
   }, []);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimeout) {
+        clearTimeout(saveTimeout);
+      }
+    };
+  }, [saveTimeout]);
 
   // Update filtered count whenever filters or events change
   useEffect(() => {
@@ -95,48 +235,61 @@ export default function FilterPostsPage() {
   }, [filters, allEvents]);
 
   const handleCategoryToggle = (category: TalentCategory) => {
-    setFilters(prev => ({
-      ...prev,
-      categories: prev.categories.includes(category)
-        ? prev.categories.filter(c => c !== category)
-        : [...prev.categories, category]
-    }));
+    const newFilters = {
+      ...filters,
+      categories: filters.categories.includes(category)
+        ? filters.categories.filter(c => c !== category)
+        : [...filters.categories, category]
+    };
+    setFilters(newFilters);
+    saveFilterPreferences(newFilters);
   };
 
   const handleTimePostedSelect = (time: TimePosted) => {
-    setFilters(prev => ({
-      ...prev,
-      timePosted: prev.timePosted === time ? null : time
-    }));
+    const newFilters = {
+      ...filters,
+      timePosted: filters.timePosted === time ? null : time
+    };
+    setFilters(newFilters);
+    saveFilterPreferences(newFilters);
   };
 
   const handleDistanceChange = (distance: number) => {
-    setFilters(prev => ({
-      ...prev,
+    const newFilters = {
+      ...filters,
       distance
-    }));
+    };
+    setFilters(newFilters);
+    // Use debounced save for distance changes to prevent rapid saves
+    debouncedSaveFilterPreferences(newFilters);
   };
 
   const handleClearAll = () => {
-    setFilters({
+    const defaultFilters = {
       categories: [],
       timePosted: null,
       distance: 50
-    });
-    // Clear filters from sessionStorage
+    };
+    setFilters(defaultFilters);
+    saveFilterPreferences(defaultFilters);
+    // Clear filters from sessionStorage as backup
     sessionStorage.removeItem('eventFilters');
     // Dispatch custom event to notify other components
     window.dispatchEvent(new CustomEvent('filtersApplied'));
   };
 
   const handleDone = () => {
-    // Save filters to sessionStorage for use in main page
+    // Save filters to database and sessionStorage
+    saveFilterPreferences(filters);
     sessionStorage.setItem('eventFilters', JSON.stringify(filters));
+    // Dispatch custom event to notify other components
+    window.dispatchEvent(new CustomEvent('filtersApplied'));
     router.back();
   };
 
   const handleShowResults = () => {
-    // Save filters and navigate back to show filtered results
+    // Save filters to database and sessionStorage, then navigate back
+    saveFilterPreferences(filters);
     sessionStorage.setItem('eventFilters', JSON.stringify(filters));
     // Dispatch custom event to notify other components
     window.dispatchEvent(new CustomEvent('filtersApplied'));
@@ -190,6 +343,17 @@ export default function FilterPostsPage() {
 
     return filtered.length;
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background text-text-primary flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-button-red mx-auto mb-4"></div>
+          <p className="text-text-secondary">Loading filters...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background text-text-primary">

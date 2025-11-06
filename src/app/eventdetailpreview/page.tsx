@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { EventData } from "../../utils/eventUtils";
 import { supabase } from "@/lib/supabaseClient";
 import { useNotifications } from "@/contexts/NotificationContext";
+import { ensureGroupChatForEvent } from "@/utils/groupChatInitUtils";
 
 // Safe normalization function to ensure all required fields exist
 const normalizeEventData = (data: any): EventData => ({
@@ -72,6 +73,21 @@ export default function EventDetailPreviewPage() {
         return;
       }
 
+      // Convert time format from "1:00 AM" to "01:00:00" for database
+      const convertTimeFormat = (timeStr: string): string => {
+        if (!timeStr) return "00:00:00";
+        
+        // Handle formats like "1:00 AM" or "13:00"
+        const time = new Date(`2000-01-01 ${timeStr}`);
+        if (isNaN(time.getTime())) {
+          // If parsing fails, try to handle 24-hour format
+          const [hours, minutes] = timeStr.split(':');
+          return `${hours.padStart(2, '0')}:${minutes || '00'}:00`;
+        }
+        
+        return time.toTimeString().split(' ')[0]; // Returns "HH:MM:SS"
+      };
+
       // Insert into Supabase
       const { error: insertError } = await supabase.from("posts").insert({
         promoter_id: user.id,
@@ -79,10 +95,10 @@ export default function EventDetailPreviewPage() {
         title: eventData.gigTitle,
         description: eventData.gigDescription,
         location: eventData.address,
-        start_date: eventData.startDate,
-        end_date: eventData.endDate,
-        start_time: eventData.startTime,
-        end_time: eventData.endTime,
+        start_date: eventData.startDate, // Should be in YYYY-MM-DD format from date input
+        end_date: eventData.endDate,     // Should be in YYYY-MM-DD format from date input
+        start_time: convertTimeFormat(eventData.startTime),
+        end_time: convertTimeFormat(eventData.endTime),
         amount: eventData.gigAmount,
         cover_photo: eventData.coverPhoto,
         talents: eventData.selectedTalents,
@@ -91,9 +107,43 @@ export default function EventDetailPreviewPage() {
 
       if (insertError) {
         console.error("Error saving post:", insertError);
-        alert("Error posting event. Try again.");
+        console.error("Insert data:", {
+          promoter_id: user.id,
+          source: eventData.coverPhoto?.includes("eventbrite") ? "eventbrite" : "manual",
+          title: eventData.gigTitle,
+          description: eventData.gigDescription,
+          location: eventData.address,
+          start_date: eventData.startDate,
+          end_date: eventData.endDate,
+          start_time: convertTimeFormat(eventData.startTime),
+          end_time: convertTimeFormat(eventData.endTime),
+          amount: eventData.gigAmount,
+          cover_photo: eventData.coverPhoto,
+          talents: eventData.selectedTalents,
+          weight_classes: eventData.selectedWeightClasses,
+        });
+        alert(`Error posting event: ${insertError.message}. Please try again.`);
       } else {
         console.log("Event saved successfully");
+        
+        // Ensure group chat is created for the event
+        try {
+          const { data: newEvent, error: eventError } = await supabase
+            .from('posts')
+            .select('id')
+            .eq('promoter_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+          
+          if (!eventError && newEvent) {
+            console.log('🔍 Ensuring group chat for new event:', newEvent.id);
+            await ensureGroupChatForEvent(newEvent.id, user.id);
+          }
+        } catch (groupChatError) {
+          console.error('❌ Error creating group chat for event:', groupChatError);
+          // Don't fail the event creation if group chat creation fails
+        }
         
         // Check if this is the user's first event
         const { data: existingPosts, error: postsError } = await supabase

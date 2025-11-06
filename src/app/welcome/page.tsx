@@ -5,9 +5,11 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { useUser } from "@/contexts/UserContext";
 
 export default function Welcome() {
   const router = useRouter();
+  const { refreshUser } = useUser();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -28,13 +30,52 @@ export default function Welcome() {
       if (error) {
         setError(error.message);
       } else {
-        // after sign in, go to dashboard (or question page)
-        router.push("/question");
+        // Check if user has a complete profile to determine redirect
+        await checkUserProfileAndRedirect();
       }
     } catch {
       setError("An unexpected error occurred");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const checkUserProfileAndRedirect = async () => {
+    try {
+      // Get current user
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        console.error('Error getting user after sign in:', authError);
+        router.push("/question");
+        return;
+      }
+
+      // Check if user has a profile with role set
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('role, full_name, talent_categories, verification_status')
+        .eq('id', user.id)
+        .single();
+
+      if (profileError || !profile) {
+        console.log('No profile found, redirecting to question page');
+        router.push("/question");
+        return;
+      }
+
+      // Check if user has completed their profile setup
+      if (profile.role && profile.role !== 'unverified') {
+        console.log('User has complete profile, redirecting to gigagent4u');
+        router.push("/gigagent4u");
+      } else {
+        console.log('User profile incomplete, redirecting to question page');
+        router.push("/question");
+      }
+    } catch (error) {
+      console.error('Error checking user profile:', error);
+      // Fallback to question page if there's an error
+      router.push("/question");
     }
   };
 

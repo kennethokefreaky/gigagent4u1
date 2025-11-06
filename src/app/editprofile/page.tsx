@@ -427,6 +427,7 @@ export default function EditProfilePage() {
         .from('profiles')
         .update({
           full_name: formData.fullName || null,
+          email: user.email || null,
           bio: formData.bio || null,
           achievements: filteredAchievements,
           social_links: filteredSocialLinks,

@@ -4,6 +4,9 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { EventData } from "../../utils/eventUtils";
 import { getVenueInfo, VenueInfo } from "../../utils/googleMapsUtils";
+import { canSendChatMessage } from "../../utils/chatLimitUtils";
+import { createApplication, hasTalentApplied } from "../../utils/applicationUtils";
+import { supabase } from "../../lib/supabaseClient";
 
 
 interface PromoterData {
@@ -11,6 +14,7 @@ interface PromoterData {
   full_name: string;
   phone_number: string;
   profile_image_url: string;
+  email?: string;
 }
 
 export default function EventDetailPage() {
@@ -19,6 +23,46 @@ export default function EventDetailPage() {
   const [promoterData, setPromoterData] = useState<PromoterData | null>(null);
   const [venueInfo, setVenueInfo] = useState<VenueInfo | null>(null);
   const [showCopySuccess, setShowCopySuccess] = useState(false);
+  const [userType, setUserType] = useState<string>("talent"); // Default to talent
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [hasApplied, setHasApplied] = useState<boolean>(false);
+  const [showSuccessPopup, setShowSuccessPopup] = useState<boolean>(false);
+  const [applying, setApplying] = useState<boolean>(false);
+
+  // Get current user type and ID
+  useEffect(() => {
+    const getCurrentUser = async () => {
+      try {
+        const { supabase } = await import('@/lib/supabaseClient');
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        
+        if (authError || !user) {
+          console.error('No authenticated user:', authError);
+          return;
+        }
+
+        setCurrentUserId(user.id);
+
+        // Get user's role from profiles table
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', user.id)
+          .single();
+
+        if (profileError || !profile) {
+          console.error('Error fetching user profile:', profileError);
+          return;
+        }
+
+        setUserType(profile.role || 'talent');
+      } catch (error) {
+        console.error('Error getting current user:', error);
+      }
+    };
+
+    getCurrentUser();
+  }, []);
 
   // Fetch promoter data from Supabase
   const fetchPromoterData = async (promoterId: string) => {
@@ -27,25 +71,20 @@ export default function EventDetailPage() {
       const { supabase } = await import('@/lib/supabaseClient');
       const { data: promoter, error } = await supabase
         .from('profiles')
-        .select('id, full_name, phone_number, profile_image_url')
+        .select('id, full_name, phone_number, profile_image_url, email')
         .eq('id', promoterId)
         .single();
 
       if (error) {
         console.error('❌ Error fetching promoter data:', error);
-        console.log('📋 Error details:', {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint
-        });
         
         // Set fallback promoter data if profile doesn't exist
         setPromoterData({
           id: promoterId,
-          full_name: 'Event Organizer',
+          full_name: 'Promoter',
           phone_number: '',
-          profile_image_url: ''
+          profile_image_url: '',
+          email: ''
         });
         return;
       }
@@ -120,14 +159,71 @@ export default function EventDetailPage() {
     }
   }, [router]);
 
+  // Check if talent has already applied to this event
+  useEffect(() => {
+    const checkApplicationStatus = async () => {
+      if (userType === "talent" && currentUserId && eventData) {
+        try {
+          const applied = await hasTalentApplied(currentUserId, eventData.id);
+          setHasApplied(applied);
+        } catch (error) {
+          console.error('Error checking application status:', error);
+        }
+      }
+    };
+
+    checkApplicationStatus();
+  }, [userType, currentUserId, eventData]);
+
   const handleBack = () => {
     router.push("/gigagent4u");
   };
 
-  const handleApply = () => {
-    // Handle apply logic here
-    console.log("Apply button clicked");
-    // You can add navigation or other logic as needed
+  const handleApply = async () => {
+    if (!currentUserId || !eventData || applying) return;
+
+    setApplying(true);
+    try {
+      // Create application
+      const application = await createApplication(currentUserId, eventData.promoterId, eventData.id);
+      
+      if (application) {
+        // Send notification to promoter
+        const { error: notificationError } = await supabase
+          .from('notifications')
+          .insert({
+            user_id: eventData.promoterId,
+            type: 'application_received',
+            title: 'New Application Received',
+            message: `A talent has applied to your event "${eventData.gigTitle}"`,
+            button_text: 'View Application',
+            icon: '📝',
+            is_read: false,
+            data: {
+              event_id: eventData.id,
+              talent_id: currentUserId,
+              application_id: application.id
+            }
+          });
+
+        if (notificationError) {
+          console.error('Error creating notification:', notificationError);
+        }
+
+        // Show success popup
+        setShowSuccessPopup(true);
+        setHasApplied(true);
+        
+        // Hide popup after 3 seconds
+        setTimeout(() => {
+          setShowSuccessPopup(false);
+        }, 3000);
+      }
+    } catch (error) {
+      console.error('Error applying to event:', error);
+    } finally {
+      setApplying(false);
+    }
   };
 
   // Enhanced call functionality for different devices
@@ -359,14 +455,15 @@ export default function EventDetailPage() {
               {/* Promoter Info */}
               <div className="flex-1">
                 <h4 className="font-semibold text-black">
-                  {promoterData.full_name || "Promoter"}
+                  {promoterData.full_name || (promoterData.email ? promoterData.email.split('@')[0] : "Promoter")}
                 </h4>
-                <p className="text-sm text-gray-600">Event Organizer</p>
+                <p className="text-sm text-gray-600">Promoter</p>
               </div>
             </div>
 
             {/* Contact Buttons */}
-            <div className="flex space-x-3">
+            <div className="flex flex-col sm:flex-row gap-3">
+              {/* Call Button */}
               {promoterData.phone_number && (
                 <button
                   onClick={() => handleCall(promoterData.phone_number)}
@@ -379,25 +476,62 @@ export default function EventDetailPage() {
                 </button>
               )}
               
-              <button 
+              {/* View Profile Button */}
+              <button
                 onClick={() => {
-                  // Store event data for the group conversation
-                  if (eventData) {
-                    sessionStorage.setItem('selectedEventForChat', JSON.stringify({
-                      eventId: eventData.id,
-                      eventTitle: eventData.gigTitle,
-                      promoterId: eventData.promoterId
-                    }));
-                  }
-                  router.push('/messages');
+                  console.log('🔍 View Profile button clicked for promoter:', eventData?.promoterId);
+                  // Navigate to profile view with promoter ID
+                  router.push(`/profileview?id=${eventData?.promoterId}`);
                 }}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors"
+                className="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                 </svg>
-                <span className="text-sm">Chat</span>
+                <span className="text-sm">View Profile</span>
               </button>
+              
+              {/* Chat Button - Only for talent users */}
+              {userType === "talent" && (
+                <button 
+                  onClick={async () => {
+                    if (!currentUserId || !eventData) return;
+
+                    console.log('🔍 Chat button clicked for event:', eventData.id);
+                    console.log('🔍 Current user ID:', currentUserId);
+                    console.log('🔍 Promoter ID:', eventData.promoterId);
+
+                    // Check if user can send chat message
+                    const chatCheck = await canSendChatMessage(currentUserId, eventData.promoterId);
+                    
+                    console.log('🔍 Chat check result:', chatCheck);
+                    
+                    if (chatCheck.canSend) {
+                      console.log('✅ User can send chat, redirecting to private chat');
+                      // Create a unique private chat ID for talent-promoter pair
+                      const privateChatId = `${currentUserId}-${eventData.promoterId}`;
+                      // Redirect to private chat (not group chat)
+                      router.push(`/messages/${privateChatId}/openmessage`);
+                    } else {
+                      console.log('❌ User cannot send chat, redirecting to subscription page');
+                      console.log('❌ Reason:', chatCheck.reason);
+                      // Redirect to subscription page with promoter info
+                      const params = new URLSearchParams({
+                        promoterId: eventData.promoterId,
+                        eventId: eventData.id,
+                        eventTitle: eventData.gigTitle
+                      });
+                      router.push(`/chatsubscription?${params.toString()}`);
+                    }
+                  }}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  <span className="text-sm">Chat</span>
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -431,18 +565,49 @@ export default function EventDetailPage() {
             <p className="text-text-primary font-semibold">
               {getAmountLabel()}: ${eventData.gigAmount}
             </p>
-            <p className="text-text-secondary text-sm">All fees included</p>
           </div>
-          <div className="flex space-x-3">
+          {userType === "talent" && (
+            <div className="flex space-x-3">
+              <button
+                onClick={handleApply}
+                disabled={hasApplied || applying}
+                className={`px-8 py-3 rounded-xl font-semibold transition-colors ${
+                  hasApplied
+                    ? "bg-green-600 text-white cursor-not-allowed"
+                    : applying
+                    ? "bg-gray-400 text-white cursor-not-allowed"
+                    : "bg-red-600 hover:bg-red-700 text-white"
+                }`}
+              >
+                {applying ? "Applying..." : hasApplied ? "Applied ✓" : "Apply"}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Success Popup */}
+      {showSuccessPopup && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 mx-4 max-w-sm w-full text-center">
+            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Application Sent!</h3>
+            <p className="text-gray-600 mb-4">
+              Your application has been sent to the promoter. They will review it and get back to you.
+            </p>
             <button
-              onClick={handleApply}
-              className="bg-red-600 hover:bg-red-700 text-white px-8 py-3 rounded-xl font-semibold transition-colors"
+              onClick={() => setShowSuccessPopup(false)}
+              className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
             >
-              Apply
+              Got it!
             </button>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

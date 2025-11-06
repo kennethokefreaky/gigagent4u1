@@ -104,17 +104,8 @@ function QuestionPageContent() {
           return;
         }
 
-        // Save to localStorage
+        // User type will be saved to Supabase profiles table
         const userType = role === "Talent" ? "talent" : "promoter";
-        localStorage.setItem('userType', userType);
-        
-        if (role === "Talent" && categories.length > 0) {
-          localStorage.setItem('talentCategories', JSON.stringify(categories));
-        }
-        
-        if (role === "Promoter" && promoterTypes.length > 0) {
-          localStorage.setItem('promoterTypes', JSON.stringify(promoterTypes));
-        }
 
         // Save role and categories to Supabase profiles table
         const updates: {

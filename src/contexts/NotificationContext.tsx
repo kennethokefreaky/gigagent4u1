@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabaseClient';
 interface Notification {
   id: string;
   user_id: string;
-  type: 'first_event' | 'new_message' | 'location_based' | 'event_posted' | 'talent_accepted' | 'verification_required' | 'breakfast_reminder' | 'lunch_reminder' | 'dinner_reminder';
+  type: 'first_event' | 'new_message' | 'location_based' | 'event_posted' | 'talent_accepted' | 'verification_required' | 'breakfast_reminder' | 'lunch_reminder' | 'dinner_reminder' | 'offer_received' | 'offer_accepted' | 'offer_edited' | 'application_received' | 'counter_offer';
   title: string;
   message: string;
   buttonText: string;
@@ -15,6 +15,13 @@ interface Notification {
   isRead: boolean;
   showConfetti?: boolean;
   created_at: string;
+  // Additional fields for offer notifications
+  offer_amount?: number;
+  event_name?: string;
+  promoter_name?: string;
+  promoter_id?: string;
+  event_id?: string;
+  data?: any;
 }
 
 interface NotificationContextType {
@@ -51,7 +58,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       
       if (authError || !user) {
-        console.error("No authenticated user for notifications:", authError);
+        console.log("No authenticated user for notifications - skipping notification loading");
         setIsInitialized(true);
         return;
       }
@@ -88,7 +95,14 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         timeAgo: getTimeAgo(notif.created_at),
         isRead: notif.is_read,
         showConfetti: notif.show_confetti,
-        created_at: notif.created_at
+        created_at: notif.created_at,
+        // Additional fields for offer notifications
+        offer_amount: notif.offer_amount,
+        event_name: notif.event_title,
+        promoter_name: notif.promoter_name,
+        promoter_id: notif.promoter_id,
+        event_id: notif.event_id,
+        data: notif.notification_data
       }));
 
       setNotifications(formattedNotifications);
@@ -105,6 +119,24 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       loadNotifications();
     }
   }, [isInitialized, loadNotifications]);
+
+  // Listen for auth state changes to reload notifications
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('Auth state changed:', event, session?.user?.id);
+      if (event === 'SIGNED_IN' && session?.user) {
+        // User signed in, reload notifications
+        setIsInitialized(false);
+        loadNotifications();
+      } else if (event === 'SIGNED_OUT') {
+        // User signed out, clear notifications
+        setNotifications([]);
+        setIsInitialized(true);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [loadNotifications]);
 
   // Listen for custom events to refresh notifications
   useEffect(() => {
@@ -196,13 +228,16 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         .select()
         .single();
 
+      // Log the full response for debugging
+      console.log('Notification insert response:', { data, error });
+
       if (error) {
         // If the notifications table doesn't exist yet, just log and continue
         if (error.code === 'PGRST116' || error.message?.includes('relation "notifications" does not exist')) {
           console.log('Notifications table not found - skipping notification creation');
           return;
         }
-        console.error('Error adding notification:', error);
+        console.error('Error adding notification:', error || 'Unknown error occurred');
         return;
       }
 

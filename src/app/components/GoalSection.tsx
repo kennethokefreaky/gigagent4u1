@@ -14,6 +14,7 @@ export default function GoalSection({ userType }: GoalSectionProps) {
   const [talentInvited, setTalentInvited] = useState(false);
   const [, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profileData, setProfileData] = useState<any>(null);
 
   // Get current user and load user-specific goals
   useEffect(() => {
@@ -44,10 +45,47 @@ export default function GoalSection({ userType }: GoalSectionProps) {
         }
 
         if (profile) {
+          // Store profile data for progress calculation
+          setProfileData(profile);
+          
           // Check profile completion based on user data
-          const hasName = profile.full_name && profile.full_name.trim() !== '';
-          const hasBio = profile.bio && profile.bio.trim() !== '';
-          setProfileCompleted(hasName && hasBio);
+          // For talent users, check all required fields
+          if (userType === "talent") {
+            const hasName = profile.full_name && profile.full_name.trim() !== '';
+            const hasBio = profile.bio && profile.bio.trim() !== '';
+            const hasPhone = profile.phone_number && profile.phone_number.trim() !== '';
+            const hasHeight = profile.height && profile.height.trim() !== '';
+            const hasWeight = profile.weight && profile.weight.trim() !== '';
+            const hasLocation = profile.location && profile.location.trim() !== '';
+            
+            // Check if user has at least one weight class (boxing or MMA)
+            const hasWeightClass = (profile.boxing_weight_class && profile.boxing_weight_class.trim() !== '') || 
+                                 (profile.mma_weight_class && profile.mma_weight_class.trim() !== '');
+            
+            // Check if user has at least one achievement
+            const hasAchievements = profile.achievements && profile.achievements.length > 0 && 
+                                  profile.achievements.some(achievement => achievement && achievement.trim() !== '');
+            
+            // Check if user has at least one social link
+            const hasSocialLinks = profile.social_links && profile.social_links.length > 0 && 
+                                 profile.social_links.some(link => link && link.trim() !== '');
+            
+            // Count completed fields (9 total fields)
+            const completedFields = [
+              hasName, hasBio, hasPhone, hasHeight, hasWeight, 
+              hasLocation, hasWeightClass, hasAchievements, hasSocialLinks
+            ].filter(Boolean).length;
+            
+            // Profile is complete when all 9 fields are filled
+            const isComplete = completedFields === 9;
+            
+            setProfileCompleted(isComplete);
+          } else {
+            // For promoters, keep the existing logic
+            const hasName = profile.full_name && profile.full_name.trim() !== '';
+            const hasBio = profile.bio && profile.bio.trim() !== '';
+            setProfileCompleted(hasName && hasBio);
+          }
 
           // Check if user has posted events (for promoters)
           if (userType === "promoter") {
@@ -159,6 +197,7 @@ export default function GoalSection({ userType }: GoalSectionProps) {
   let completeProfileProgress = 0;
   let uploadEventProgress = 0;
   let inviteTalentProgress = 0;
+  let applyForJobProgress = 0;
 
   if (userType === "promoter") {
     // For promoters: Complete profile (33%), Upload event (33%), Invite talent (33%)
@@ -170,9 +209,13 @@ export default function GoalSection({ userType }: GoalSectionProps) {
     const completedGoals = (profileCompleted ? 1 : 0) + (firstEventPosted ? 1 : 0) + (talentInvited ? 1 : 0);
     progress = Math.round((completedGoals / 3) * 100);
   } else {
-    // For talents: Complete profile (50%), Apply for job (50%)
+    // For talents: Complete profile (50%), Apply for job (50%) - 2 goals total
     completeProfileProgress = profileCompleted ? 100 : 0;
-    progress = profileCompleted ? 50 : 0; // 1 out of 2 goals
+    applyForJobProgress = 0; // Always 0 for now
+    
+    // Calculate total progress (2 goals total)
+    const completedGoals = (profileCompleted ? 1 : 0) + (applyForJobProgress === 100 ? 1 : 0);
+    progress = Math.round((completedGoals / 2) * 100);
   }
 
   return (
@@ -194,7 +237,7 @@ export default function GoalSection({ userType }: GoalSectionProps) {
 
       {/* Progress Bar */}
       <div className="w-full bg-gray-700 rounded-full h-2 mb-4">
-        <div className="bg-yellow-400 h-2 rounded-full transition-all duration-500" style={{ width: `${progress}%` }}></div>
+        <div className="bg-yellow-400 h-2 rounded-full" style={{ width: `${progress}%` }}></div>
       </div>
 
       {/* Description */}
@@ -243,7 +286,14 @@ export default function GoalSection({ userType }: GoalSectionProps) {
         ) : (
           <div className="flex justify-between items-center">
             <span className="text-white text-sm">Apply for job</span>
-            <span className="text-white text-sm font-semibold">0%</span>
+            <div className="flex items-center space-x-2">
+              {applyForJobProgress === 100 && (
+                <svg className="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+              )}
+              <span className="text-white text-sm font-semibold">{applyForJobProgress}%</span>
+            </div>
           </div>
         )}
       </div>

@@ -371,17 +371,9 @@ export default function CreateEventPage() {
   // Generate minute options (00, 15, 30, 45)
   const minuteOptions = ['00', '15', '30', '45'];
 
-  // Dynamic amount field label
+  // Amount field label - always "Show rate"
   const getAmountLabel = () => {
-    if (selectedTalents.includes("Boxer") || selectedTalents.includes("MMA")) {
-      return "Fight purse per match";
-    } else if (selectedTalents.includes("Comedian")) {
-      return "Show fee";
-    } else if (selectedTalents.includes("Musician")) {
-      return "Performance fee (per gig)";
-    } else {
-      return "Booking rate";
-    }
+    return "Show rate";
   };
 
   // Form validation
@@ -661,8 +653,14 @@ export default function CreateEventPage() {
 
       {/* Talent Selection Bottom Sheet */}
       {showTalentBottomSheet && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end">
-          <div className="bg-surface w-full rounded-t-xl p-4 max-h-[90vh] min-h-[60vh] overflow-y-auto bottom-sheet">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end"
+          onClick={() => setShowTalentBottomSheet(false)}
+        >
+          <div 
+            className="bg-surface w-full rounded-t-xl p-4 max-h-[90vh] min-h-[60vh] overflow-y-auto bottom-sheet"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-subheading font-semibold">Select Categories</h3>
               <button
@@ -700,8 +698,14 @@ export default function CreateEventPage() {
 
       {/* Weight Class Selection Bottom Sheet */}
       {showWeightClassBottomSheet && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end">
-          <div className="bg-surface w-full rounded-t-xl p-4 max-h-[90vh] min-h-[60vh] overflow-y-auto bottom-sheet">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end"
+          onClick={() => setShowWeightClassBottomSheet(false)}
+        >
+          <div 
+            className="bg-surface w-full rounded-t-xl p-4 max-h-[90vh] min-h-[60vh] overflow-y-auto bottom-sheet"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-subheading font-semibold">Select Weight Class</h3>
               <button
@@ -781,8 +785,14 @@ export default function CreateEventPage() {
 
       {/* Photo Options Bottom Sheet */}
       {showPhotoOptions && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end">
-          <div className="bg-surface w-full rounded-t-xl p-4 min-h-[40vh] bottom-sheet">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end"
+          onClick={() => setShowPhotoOptions(false)}
+        >
+          <div 
+            className="bg-surface w-full rounded-t-xl p-4 min-h-[40vh] bottom-sheet"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-subheading font-semibold">Add Photo</h3>
               <button
@@ -884,8 +894,14 @@ export default function CreateEventPage() {
 
       {/* Title Bottom Sheet */}
       {showTitleBottomSheet && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end">
-          <div className="bg-surface w-full rounded-t-xl p-4 min-h-[40vh] bottom-sheet">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end"
+          onClick={() => setShowTitleBottomSheet(false)}
+        >
+          <div 
+            className="bg-surface w-full rounded-t-xl p-4 min-h-[40vh] bottom-sheet"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-subheading font-semibold">Gig Title</h3>
               <button
@@ -909,8 +925,14 @@ export default function CreateEventPage() {
 
       {/* Description Bottom Sheet */}
       {showDescriptionBottomSheet && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end">
-          <div className="bg-surface w-full rounded-t-xl p-4 max-h-[90vh] min-h-[60vh] bottom-sheet-with-textarea">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end"
+          onClick={() => setShowDescriptionBottomSheet(false)}
+        >
+          <div 
+            className="bg-surface w-full rounded-t-xl p-4 max-h-[90vh] min-h-[60vh] bottom-sheet-with-textarea"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-subheading font-semibold">Gig Description</h3>
               <button
@@ -1019,8 +1041,14 @@ export default function CreateEventPage() {
 
       {/* Date Range Bottom Sheet */}
       {showDateBottomSheet && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end">
-          <div className="bg-surface w-full rounded-t-xl p-4 max-h-[90vh] min-h-[60vh] bottom-sheet">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end"
+          onClick={() => setShowDateBottomSheet(false)}
+        >
+          <div 
+            className="bg-surface w-full rounded-t-xl p-4 max-h-[90vh] min-h-[60vh] bottom-sheet"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex justify-between items-center mb-4">
               <button
                 onClick={() => {
@@ -1091,8 +1119,14 @@ export default function CreateEventPage() {
 
       {/* Time Range Bottom Sheet */}
       {showTimeBottomSheet && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end">
-          <div className="bg-surface w-full rounded-t-xl p-4 max-h-[90vh] min-h-[60vh] bottom-sheet">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end"
+          onClick={() => setShowTimeBottomSheet(false)}
+        >
+          <div 
+            className="bg-surface w-full rounded-t-xl p-4 max-h-[90vh] min-h-[60vh] bottom-sheet"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex justify-between items-center mb-4">
               <button
                 onClick={() => {
@@ -1227,8 +1261,14 @@ export default function CreateEventPage() {
 
       {/* Payment Bottom Sheet */}
       {showPaymentBottomSheet && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end">
-          <div className="bg-surface w-full rounded-t-xl p-4 min-h-[50vh] bottom-sheet">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end"
+          onClick={() => setShowPaymentBottomSheet(false)}
+        >
+          <div 
+            className="bg-surface w-full rounded-t-xl p-4 min-h-[50vh] bottom-sheet"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex justify-between items-center mb-4">
               <button
                 onClick={() => setGigAmount("")}

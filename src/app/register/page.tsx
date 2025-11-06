@@ -16,6 +16,7 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
+
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -52,54 +53,69 @@ export default function Register() {
     }
 
     try {
+      console.log("🔍 DEBUG: Starting registration process for email:", email);
+      
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
       });
 
+      console.log("🔍 DEBUG: Supabase signUp response:", { data, error });
+
       if (error) {
+        console.error("❌ DEBUG: Supabase signUp error:", error);
         setError(error.message);
       } else {
         // Check if email confirmation is required
         if (data.user && !data.user.email_confirmed_at) {
+          console.log("🔍 DEBUG: Email confirmation required for user:", data.user.id);
           // Email confirmation required - redirect to welcome page
           setError("Account created! Please check your email to confirm your account, then sign in.");
           setTimeout(() => {
             router.push("/welcome");
           }, 2000);
         } else {
+          console.log("🔍 DEBUG: No email confirmation required, proceeding with auto sign-in");
           // No email confirmation required - auto sign in
           const { error: signInError } = await supabase.auth.signInWithPassword({
             email,
             password,
           });
 
+          console.log("🔍 DEBUG: Auto sign-in response:", { signInError });
+
           if (signInError) {
-            console.error("Auto sign-in failed:", signInError);
+            console.error("❌ DEBUG: Auto sign-in failed:", signInError);
             setError("Account created but sign-in failed. Please sign in manually.");
             setTimeout(() => {
               router.push("/welcome");
             }, 2000);
           } else {
-            console.log("User registered and signed in successfully");
+            console.log("✅ DEBUG: User registered and signed in successfully");
             
             // Create profile entry for the new user
             if (data.user) {
+              console.log("🔍 DEBUG: Creating profile for user:", data.user.id);
               try {
                 const { error: profileError } = await supabase
                   .from('profiles')
                   .upsert({
                     id: data.user.id,
+                    email: email,
                     verification_status: 'unverified'
                   }, { onConflict: 'id' });
 
+                console.log("🔍 DEBUG: Profile creation response:", { profileError });
+
                 if (profileError) {
-                  console.error("Error creating profile:", profileError);
+                  console.error("❌ DEBUG: Error creating profile:", profileError);
+                  setError("Database error saving new user");
                 } else {
-                  console.log("Profile created successfully");
+                  console.log("✅ DEBUG: Profile created successfully");
                 }
               } catch (profileErr) {
-                console.error("Error inserting profile:", profileErr);
+                console.error("❌ DEBUG: Exception in profile creation:", profileErr);
+                setError("Database error saving new user");
               }
             }
             
@@ -110,7 +126,8 @@ export default function Register() {
           }
         }
       }
-    } catch {
+    } catch (err) {
+      console.error("❌ DEBUG: Unexpected error in registration:", err);
       setError("An unexpected error occurred");
     } finally {
       setLoading(false);
@@ -142,6 +159,7 @@ export default function Register() {
             {error}
           </div>
         )}
+
 
         {/* Email */}
         <div className="flex items-center bg-input-background border border-gray-700 radius-md mb-4 px-3 focus-within:ring-2 focus-within:ring-white focus-within:ring-opacity-50 focus-within:border-white transition-all">

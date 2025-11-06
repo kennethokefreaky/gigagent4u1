@@ -5,10 +5,12 @@ import { useEffect, useState } from "react";
 import confetti from "canvas-confetti";
 import { useNotifications } from "../../contexts/NotificationContext";
 import Navigation from "../components/Navigation";
+import { handleOfferAcceptance, handleOfferEdit } from "../../utils/offerUtils";
+import { supabase } from "../../lib/supabaseClient";
 
 interface Notification {
   id: string;
-  type: 'first_event' | 'new_message' | 'location_based';
+  type: 'first_event' | 'new_message' | 'location_based' | 'offer_received' | 'offer_accepted' | 'offer_edited' | 'counter_offer';
   title: string;
   message: string;
   buttonText: string;
@@ -17,13 +19,37 @@ interface Notification {
   timeAgo: string;
   isRead: boolean;
   showConfetti?: boolean;
+  // Additional fields for offer notifications
+  offer_amount?: number;
+  event_name?: string;
+  promoter_name?: string;
+  promoter_id?: string;
+  event_id?: string;
+  data?: any;
 }
+
+// Helper functions to extract data from notification messages
+const extractEventTitleFromMessage = (message: string): string => {
+  const eventTitleMatch = message.match(/"([^"]+)"/);
+  return eventTitleMatch ? eventTitleMatch[1] : 'Recent Event';
+};
+
+const extractAmountFromMessage = (message: string): string => {
+  const amountMatch = message.match(/\$([\d,]+)/);
+  return amountMatch ? amountMatch[1] : '0';
+};
 
 export default function NotificationsPage() {
   const router = useRouter();
   const { notifications, markAsRead, markAllAsRead } = useNotifications();
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [needsVerification, setNeedsVerification] = useState(false);
+  const [showOfferBottomSheet, setShowOfferBottomSheet] = useState(false);
+  const [selectedOfferNotification, setSelectedOfferNotification] = useState<any>(null);
+  const [showJoinGroupChatPopup, setShowJoinGroupChatPopup] = useState(false);
+  const [acceptedEventData, setAcceptedEventData] = useState<any>(null);
+  const [showAlreadyAcceptedPopup, setShowAlreadyAcceptedPopup] = useState(false);
+  const [alreadyAcceptedEventData, setAlreadyAcceptedEventData] = useState<any>(null);
 
   // Mark all notifications as read when user visits the page
   useEffect(() => {
@@ -127,7 +153,52 @@ export default function NotificationsPage() {
     });
   };
 
-  const handleNotificationClick = (notification: Notification) => {
+  // Check if talent has already accepted an offer for this event
+  const hasAlreadyAcceptedOffer = async (talentId: string, eventId: string): Promise<boolean> => {
+    try {
+      const { supabase } = await import('@/lib/supabaseClient');
+      
+      // Check if there's already an accepted notification for this talent and event
+      const { data: acceptedNotification, error: notificationError } = await supabase
+        .from('notifications')
+        .select('id, button_text')
+        .eq('user_id', talentId)
+        .eq('event_id', eventId)
+        .eq('type', 'offer_received')
+        .in('button_text', ['Accepted', 'accepted'])
+        .single();
+
+      if (notificationError && notificationError.code !== 'PGRST116') {
+        console.error('Error checking accepted notification:', notificationError);
+        return false;
+      }
+
+      // Also check if there's a candidate record (as backup)
+      try {
+        const { data: candidate, error: candidateError } = await supabase
+          .from('candidates')
+          .select('id')
+          .eq('talent_id', talentId)
+          .eq('event_id', eventId)
+          .single();
+
+        if (candidateError && candidateError.code !== 'PGRST116') {
+          console.log('Candidate check failed (likely RLS), using notification check only');
+        } else if (candidate) {
+          return true;
+        }
+      } catch (candidateError) {
+        console.log('Candidate table access failed, using notification check only');
+      }
+
+      return !!acceptedNotification;
+    } catch (error) {
+      console.error('Error checking if offer was already accepted:', error);
+      return false;
+    }
+  };
+
+  const handleNotificationClick = async (notification: Notification) => {
     if (!notification.isRead) {
       markAsRead(notification.id);
     }
@@ -140,8 +211,85 @@ export default function NotificationsPage() {
       router.push('/gigagent4u');
     } else if (notification.type === 'talent_accepted') {
       router.push('/promotertalentlist');
+    } else if (notification.type === 'offer_received') {
+      // Check if user has already accepted an offer for this event
+      const { supabase } = await import('@/lib/supabaseClient');
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        console.error('No authenticated user:', authError);
+        return;
+      }
+
+      const eventId = notification.event_id;
+      if (eventId) {
+        const alreadyAccepted = await hasAlreadyAcceptedOffer(user.id, eventId);
+        
+        if (alreadyAccepted) {
+          // Show "already accepted" popup
+          setAlreadyAcceptedEventData({
+            eventTitle: notification.event_name || extractEventTitleFromMessage(notification.message),
+            amount: notification.offer_amount || extractAmountFromMessage(notification.message)
+          });
+          setShowAlreadyAcceptedPopup(true);
+          return;
+        }
+      }
+      
+      setSelectedOfferNotification(notification);
+      setShowOfferBottomSheet(true);
     } else if (notification.type === 'new_message') {
-      router.push('/messages');
+      // Route directly to the exact chat (group/private) without touching badges
+      (async () => {
+        try {
+          // 1) Prefer explicit conversation fields if present in payload
+          if (notification.data?.conversation_id && notification.data?.conversation_type) {
+            const href = notification.data.conversation_type === 'group'
+              ? `/messages/${notification.data.conversation_id}/groupchat`
+              : `/messages/${notification.data.conversation_id}/openmessage`;
+            return router.push(href);
+          }
+
+          // 2) Load stored fields from notifications row
+          const { data: row } = await supabase
+            .from('notifications')
+            .select('conversation_id, conversation_type, event_id, chat_id')
+            .eq('id', notification.id)
+            .single();
+
+          if (row?.conversation_id && row?.conversation_type) {
+            const href = row.conversation_type === 'group'
+              ? `/messages/${row.conversation_id}/groupchat`
+              : `/messages/${row.conversation_id}/openmessage`;
+            return router.push(href);
+          }
+
+          // 3) Group fallback: map event_id -> unified_conversations.id
+          if (row?.event_id || notification.data?.event_id) {
+            const eventId = row?.event_id || notification.data?.event_id;
+            const { data: conv } = await supabase
+              .from('unified_conversations')
+              .select('id')
+              .eq('conversation_type', 'group')
+              .eq('event_id', eventId)
+              .limit(1)
+              .single();
+            const targetId = conv?.id || eventId; // fallback if mapping missing
+            return router.push(`/messages/${targetId}/groupchat`);
+          }
+
+          // 4) Private fallback: use chat_id if provided
+          if (row?.chat_id || notification.data?.chat_id) {
+            const chatId = row?.chat_id || notification.data?.chat_id;
+            return router.push(`/messages/${chatId}/openmessage`);
+          }
+
+          // 5) Final fallback
+          router.push('/messages');
+        } catch (e) {
+          router.push('/messages');
+        }
+      })();
     } else if (notification.type === 'location_based' || notification.type === 'breakfast_reminder' || notification.type === 'lunch_reminder' || notification.type === 'dinner_reminder') {
       // Store the search term and navigate to map
       if (notification.message.includes('McDonald')) {
@@ -159,8 +307,257 @@ export default function NotificationsPage() {
         sessionStorage.setItem('mealTime', 'dinner');
       }
       router.push('/map');
+    } else if (notification.type === 'verification_required') {
+      setShowVerificationModal(true);
+    } else if (notification.type === 'offer_accepted' || notification.type === 'offer_edited') {
+      // Navigate to promoter's candidate list with event focus
+      const eventId = notification.event_id || notification.data?.event_id;
+      if (eventId) {
+        // Store event ID in sessionStorage for the Tabs component to use
+        sessionStorage.setItem('focusEventId', eventId);
+        sessionStorage.setItem('focusTab', 'Candidates');
+      }
+      router.push('/gigagent4u');
     }
   };
+
+  const handleAcceptOffer = async () => {
+    if (!selectedOfferNotification) return;
+
+    try {
+      const { supabase } = await import('@/lib/supabaseClient');
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        console.error('No authenticated user:', authError);
+        return;
+      }
+
+      // Double-check if offer was already accepted before proceeding
+      const eventId = selectedOfferNotification.event_id;
+      if (eventId) {
+        const alreadyAccepted = await hasAlreadyAcceptedOffer(user.id, eventId);
+        
+        if (alreadyAccepted) {
+          console.log('❌ Offer already accepted, preventing duplicate acceptance');
+          setAlreadyAcceptedEventData({
+            eventTitle: selectedOfferNotification.event_name || extractEventTitleFromMessage(selectedOfferNotification.message),
+            amount: selectedOfferNotification.offer_amount || extractAmountFromMessage(selectedOfferNotification.message)
+          });
+          setShowAlreadyAcceptedPopup(true);
+          setShowOfferBottomSheet(false);
+          setSelectedOfferNotification(null);
+          return;
+        }
+      }
+
+      // Extract amount from notification message
+      const amountMatch = selectedOfferNotification.message.match(/\$([\d,]+)/);
+      const amount = amountMatch ? amountMatch[1] : '0';
+
+      // Extract event title from notification message
+      const eventTitleMatch = selectedOfferNotification.message.match(/"([^"]+)"/);
+      const eventTitle = eventTitleMatch ? eventTitleMatch[1] : 'Recent Event';
+
+      // Get promoter ID from notification
+      const promoterId = selectedOfferNotification.promoter_id;
+      
+      if (!promoterId || !eventId) {
+        console.error('❌ Missing promoter_id or event_id in notification:', {
+          promoterId,
+          eventId,
+          notification: selectedOfferNotification
+        });
+        
+        alert('This offer notification is missing required information. Please try refreshing the page or contact support.');
+        setShowOfferBottomSheet(false);
+        setSelectedOfferNotification(null);
+        return;
+      }
+
+      console.log('🔍 Offer acceptance data:', {
+        notificationId: selectedOfferNotification.id,
+        talentId: user.id,
+        promoterId,
+        amount,
+        eventId,
+        eventTitle
+      });
+
+      // Handle offer acceptance
+      const acceptanceResult = await handleOfferAcceptance(selectedOfferNotification.id, user.id, promoterId, amount, eventId, eventTitle);
+      
+      if (!acceptanceResult) {
+        console.error('❌ Offer acceptance failed');
+        alert('Failed to accept the offer. Please try again.');
+        return;
+      }
+      
+      // Add talent to group chat
+      const groupChatResult = await addTalentToGroupChat(eventId, user.id, promoterId, eventTitle);
+      
+      if (!groupChatResult) {
+        console.error('❌ Failed to add talent to group chat');
+        alert('Offer accepted but failed to join group chat. Please contact support.');
+        return;
+      }
+      
+      // Only show success popup if everything succeeded
+      setAcceptedEventData({
+        eventTitle,
+        promoterId,
+        amount
+      });
+      setShowJoinGroupChatPopup(true);
+      
+      setShowOfferBottomSheet(false);
+      setSelectedOfferNotification(null);
+    } catch (error) {
+      console.error('Error accepting offer:', error);
+    }
+  };
+
+  const addTalentToGroupChat = async (eventId: string, talentId: string, promoterId: string, eventTitle: string): Promise<boolean> => {
+    try {
+      const { supabase } = await import('@/lib/supabaseClient');
+      
+      // Get talent profile information
+      const { data: talentProfile, error: profileError } = await supabase
+        .from('profiles')
+        .select('full_name, username, email')
+        .eq('id', talentId)
+        .single();
+
+      if (profileError) {
+        console.error('Error fetching talent profile:', profileError);
+        return false;
+      }
+
+      const talentName = talentProfile.full_name || talentProfile.username || talentProfile.email?.split('@')[0] || 'Talent';
+
+      // Add talent to message_participants table
+      const { error: participantError } = await supabase
+        .from('message_participants')
+        .insert({
+          event_id: eventId,
+          user_id: talentId,
+          role: 'talent',
+          joined_at: new Date().toISOString()
+        });
+
+      if (participantError) {
+        console.error('Error adding talent to message_participants:', participantError);
+        return false;
+      }
+
+      // Add talent to unified_participants table
+      const { error: unifiedParticipantError } = await supabase
+        .from('unified_participants')
+        .insert({
+          conversation_id: `group_${eventId}`,
+          user_id: talentId,
+          conversation_type: 'group',
+          event_id: eventId,
+          last_read_at: new Date().toISOString(),
+          participant_name: talentName,
+          participant_email: talentProfile.email
+        });
+
+      if (unifiedParticipantError) {
+        console.error('Error adding talent to unified_participants:', unifiedParticipantError);
+        return false;
+      }
+
+      // Send welcome message to group chat
+      const { error: messageError } = await supabase
+        .from('messages')
+        .insert({
+          event_id: eventId,
+          sender_id: promoterId,
+          message_text: `${talentName} has been added to the group chat for "${eventTitle}". Welcome!`,
+          message_type: 'system',
+          created_at: new Date().toISOString()
+        });
+
+      if (messageError) {
+        console.error('Error sending welcome message:', messageError);
+        // Don't return false here as the main functionality (adding participant) succeeded
+      }
+
+      // Add to unified_messages table as well
+      const { error: unifiedMessageError } = await supabase
+        .from('unified_messages')
+        .insert({
+          conversation_id: `group_${eventId}`,
+          sender_id: promoterId,
+          message_text: `${talentName} has been added to the group chat for "${eventTitle}". Welcome!`,
+          message_type: 'system',
+          sender_name: 'System',
+          created_at: new Date().toISOString()
+        });
+
+      if (unifiedMessageError) {
+        console.error('Error adding welcome message to unified_messages:', unifiedMessageError);
+        // Don't return false here as the main functionality (adding participant) succeeded
+      }
+
+      console.log('✅ Talent added to group chat successfully');
+      return true;
+
+    } catch (error) {
+      console.error('Error adding talent to group chat:', error);
+      return false;
+    }
+  };
+
+  const handleEditOffer = async () => {
+    console.log('🔍 handleEditOffer called');
+    
+    if (!selectedOfferNotification) {
+      console.error('❌ No offer notification selected');
+      return;
+    }
+    
+    console.log('🔍 Full notification object:', selectedOfferNotification);
+    console.log('🔍 Notification message:', selectedOfferNotification.message);
+    console.log('🔍 Notification type:', selectedOfferNotification.type);
+    
+    // Simple extraction from message
+    const amountMatch = selectedOfferNotification.message.match(/\$([\d,]+)/);
+    const eventMatch = selectedOfferNotification.message.match(/"([^"]+)"/);
+    
+    const amount = amountMatch ? amountMatch[1] : '0';
+    const eventTitle = eventMatch ? eventMatch[1] : 'Unknown Event';
+    
+    console.log('🔍 Extracted:', { amount, eventTitle });
+    
+    // Create simple data object
+    const notificationData = {
+      id: selectedOfferNotification.id,
+      offer_amount: parseFloat(amount),
+      event_name: eventTitle,
+      promoter_name: 'A promoter',
+      promoter_id: 'unknown',
+      event_id: 'unknown'
+    };
+    
+    console.log('🔍 Data to store:', notificationData);
+    
+    try {
+      // Store in sessionStorage
+      sessionStorage.setItem('editOfferData', JSON.stringify(notificationData));
+      console.log('🔍 Data stored successfully');
+      
+      // Navigate immediately
+      router.push('/edit-offer');
+      console.log('🔍 Navigation called');
+      
+    } catch (error) {
+      console.error('🔍 Error:', error);
+      alert('Error: ' + error.message);
+    }
+  };
+
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-text-primary">
@@ -301,6 +698,223 @@ export default function NotificationsPage() {
                 className="flex-1 py-4 px-6 bg-button-red text-white font-semibold hover:bg-button-red-hover transition-colors focus:outline-none focus:ring-2 focus:ring-button-red"
               >
                 Get Verified
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Offer Response Bottom Sheet */}
+      {showOfferBottomSheet && selectedOfferNotification && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end">
+          <div className="bg-surface w-full rounded-t-xl p-4 min-h-[50vh] bottom-sheet">
+            <div className="flex justify-between items-center mb-4">
+              <button
+                onClick={() => setShowOfferBottomSheet(false)}
+                className="text-button-red font-semibold"
+              >
+                Cancel
+              </button>
+              <h3 className="text-subheading font-semibold">Respond to Offer</h3>
+              <div className="w-16"></div>
+            </div>
+            
+            <div className="text-center mb-6">
+              <p className="text-text-secondary text-sm mb-2">Original Offer</p>
+              <p className="text-2xl font-bold text-text-primary">
+                {selectedOfferNotification.message.match(/\$([\d,]+)/)?.[0] || '$0'}
+              </p>
+              <p className="text-text-secondary text-xs mt-2">
+                {selectedOfferNotification.message}
+              </p>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="space-y-3 mb-6">
+              <button
+                onClick={handleAcceptOffer}
+                className="w-full bg-green-600 text-white py-4 rounded-xl font-semibold hover:bg-green-700 transition-colors"
+              >
+                Accept Offer
+              </button>
+              
+              <button
+                onClick={handleEditOffer}
+                className="w-full bg-blue-600 text-white py-4 rounded-xl font-semibold hover:bg-blue-700 transition-colors"
+              >
+                Edit Offer
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* Join Group Chat Popup */}
+      {showJoinGroupChatPopup && acceptedEventData && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 mx-4 max-w-sm w-full text-center">
+            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Offer Accepted Successfully!</h3>
+            <p className="text-gray-600 mb-4">
+              You've successfully accepted the offer for <strong>{acceptedEventData.eventTitle}</strong>. 
+              Join the group chat to connect with the promoter and other talents.
+            </p>
+            <div className="flex space-x-3">
+              <button
+                onClick={() => {
+                  setShowJoinGroupChatPopup(false);
+                  setAcceptedEventData(null);
+                }}
+                className="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-700 px-4 py-2 rounded-lg font-medium transition-colors"
+              >
+                Close
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    // Get current user
+                    const { data: { user }, error: authError } = await supabase.auth.getUser();
+                    if (authError || !user) {
+                      console.error('No authenticated user:', authError);
+                      return;
+                    }
+
+                    // Method 1: Try to get event ID from notifications
+                    console.log('🔍 Method 1: Looking for notifications with event_id...');
+                    const { data: notifications, error: notificationsError } = await supabase
+                      .from('notifications')
+                      .select('event_id, promoter_id, type, button_text, message')
+                      .eq('user_id', user.id)
+                      .eq('type', 'offer_received');
+
+                    console.log('🔍 Found notifications:', notifications);
+
+                    let eventId = null;
+
+                    // Try to find a notification with event_id
+                    if (notifications && notifications.length > 0) {
+                      const notificationWithEventId = notifications.find(n => n.event_id);
+                      if (notificationWithEventId) {
+                        eventId = notificationWithEventId.event_id;
+                        console.log('🔍 Found event_id from notification:', eventId);
+                      }
+                    }
+
+                    // Method 2: If no event_id found, try to find by event title
+                    if (!eventId && acceptedEventData?.eventTitle) {
+                      console.log('🔍 Method 2: Looking for event by title:', acceptedEventData.eventTitle);
+                      
+                      const { data: event, error: eventError } = await supabase
+                        .from('posts')
+                        .select('id, title')
+                        .ilike('title', `%${acceptedEventData.eventTitle}%`)
+                        .single();
+                      
+                      if (event?.id) {
+                        eventId = event.id;
+                        console.log('🔍 Found event by title:', eventId);
+                      } else {
+                        console.errorr('❌ Could not find event by title:', eventError);
+                      }
+                    }
+
+                    // Method 3: If still no event found, try to find any recent event
+                    if (!eventId) {
+                      console.log('🔍 Method 3: Looking for any recent event...');
+                      
+                      const { data: recentEvent, error: recentEventError } = await supabase
+                        .from('posts')
+                        .select('id, title')
+                        .order('created_at', { ascending: false })
+                        .limit(1)
+                        .single();
+                      
+                      if (recentEvent?.id) {
+                        eventId = recentEvent.id;
+                        console.log('🔍 Using recent event as fallback:', eventId);
+                      } else {
+                        console.errorr('❌ No events found at all:', recentEventError);
+                      }
+                    }
+
+                    // Add talent to group chat if we found an event
+                    if (eventId) {
+                      console.log('🔍 Adding talent to group chat for event:', eventId);
+                      
+                      const { error: joinError } = await supabase
+                        .from('message_participants')
+                        .upsert({
+                          event_id: eventId,
+                          user_id: user.id,
+                          joined_at: new Date().toISOString(),
+                          last_read_at: new Date().toISOString()
+                        }, {
+                          onConflict: 'event_id,user_id'
+                        });
+
+                      if (joinError) {
+                        console.errorr('❌ Error joining group chat:', joinError);
+                      } else {
+                        console.log('✅ Successfully joined group chat for event:', eventId);
+                      }
+                    } else {
+                      console.error('❌ No event found to join group chat');
+                    }
+
+                    setShowJoinGroupChatPopup(false);
+                    setAcceptedEventData(null);
+                    router.push('/messages');
+                  } catch (error) {
+                    console.error('Error joining group chat:', error);
+                  }
+                }}
+                className="flex-1 bg-button-red hover:bg-button-red-hover text-white px-4 py-2 rounded-lg font-medium transition-colors"
+              >
+                Join Group Chat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Already Accepted Offer Popup */}
+      {showAlreadyAcceptedPopup && alreadyAcceptedEventData && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 mx-4 max-w-sm w-full text-center">
+            <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">You Already Accepted This Offer!</h3>
+            <p className="text-gray-600 mb-4">
+              You've already accepted the offer for <strong>{alreadyAcceptedEventData.eventTitle}</strong>. 
+              You can't accept the same offer twice. Go to messages to connect with the promoter and other talents.
+            </p>
+            <div className="flex space-x-3">
+              <button
+                onClick={() => {
+                  setShowAlreadyAcceptedPopup(false);
+                  setAlreadyAcceptedEventData(null);
+                }}
+                className="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-700 px-4 py-2 rounded-lg font-medium transition-colors"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  setShowAlreadyAcceptedPopup(false);
+                  setAlreadyAcceptedEventData(null);
+                  router.push('/messages');
+                }}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+              >
+                Go to Messages
               </button>
             </div>
           </div>

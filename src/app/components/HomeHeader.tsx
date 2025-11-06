@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { useMessageBadge } from "../../contexts/MessageBadgeContext";
 import Script from "next/script";
 
 interface HomeHeaderProps {
@@ -38,6 +39,12 @@ type GooglePlace = {
 
 export default function HomeHeader({ userType }: HomeHeaderProps) {
   const router = useRouter();
+  const { unreadMessageCount } = useMessageBadge();
+  
+  // Debug logging for message badge
+  useEffect(() => {
+    console.log('🏠 HomeHeader - unreadMessageCount:', unreadMessageCount);
+  }, [unreadMessageCount]);
   const [hasActiveFilters, setHasActiveFilters] = useState(false);
   const [showLocationSearch, setShowLocationSearch] = useState(false);
   const [search, setSearch] = useState("");
@@ -217,9 +224,7 @@ export default function HomeHeader({ userType }: HomeHeaderProps) {
             const lng = details.geometry?.location?.lng();
             
             if (lat && lng) {
-              // Store location in localStorage for talent users
-              const locationData = { city, state, lat, lng };
-              localStorage.setItem('talentLocation', JSON.stringify(locationData));
+              // Location will be saved to Supabase when user completes location flow
               setShowLocationSearch(false);
               setSearch("");
               setSelected(null);
@@ -236,9 +241,7 @@ export default function HomeHeader({ userType }: HomeHeaderProps) {
     const state = location.address?.state || 'Unknown State';
     
     if (location.lat && location.lon) {
-      // Store location in localStorage for talent users
-      const locationData = { city, state, lat: location.lat, lng: location.lon };
-      localStorage.setItem('talentLocation', JSON.stringify(locationData));
+      // Location will be saved to Supabase when user completes location flow
       setShowLocationSearch(false);
       setSearch("");
       setSelected(null);
@@ -247,9 +250,7 @@ export default function HomeHeader({ userType }: HomeHeaderProps) {
 
   const handleLocationDone = () => {
     if (selected) {
-      // Store location in localStorage for talent users
-      const locationData = { city: selected.city, state: selected.state };
-      localStorage.setItem('talentLocation', JSON.stringify(locationData));
+      // Location will be saved to Supabase when user completes location flow
       setShowLocationSearch(false);
       setSearch("");
       setSelected(null);
@@ -277,9 +278,7 @@ export default function HomeHeader({ userType }: HomeHeaderProps) {
           const city = data.address.city || data.address.town || data.address.village || "Unknown City";
           const state = data.address.state || "Unknown State";
 
-          // Store location in localStorage for talent users
-          const locationData = { city, state, lat: latitude, lng: longitude };
-          localStorage.setItem('talentLocation', JSON.stringify(locationData));
+          // Location will be saved to Supabase when user completes location flow
           setShowLocationSearch(false);
           setSearch("");
           setSelected(null);
@@ -332,12 +331,18 @@ export default function HomeHeader({ userType }: HomeHeaderProps) {
 
         {/* Message Button */}
         <button 
-          className="p-2 text-text-secondary hover:text-text-primary transition-colors"
+          className="p-2 text-text-secondary hover:text-text-primary transition-colors relative"
           onClick={handleMessageClick}
         >
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
           </svg>
+          {/* Badge with unread message count */}
+          {unreadMessageCount > 0 && (
+            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-semibold">
+              {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
+            </span>
+          )}
         </button>
       </div>
 

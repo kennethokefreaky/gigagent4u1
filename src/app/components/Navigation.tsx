@@ -18,6 +18,7 @@ export default function Navigation() {
         const { data: { user }, error: authError } = await supabase.auth.getUser();
         
         if (authError || !user) {
+          console.log('Navigation: No authenticated user - skipping verification check');
           return;
         }
 

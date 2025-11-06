@@ -27,23 +27,21 @@ function VerifyIDContent() {
     setIsAthleticRole(athleticCheck);
     console.log("VerifyID - Athletic check result:", athleticCheck, "for roles:", roles);
 
-    // Base options
-    options.push("State ID", "Passport");
+    // Base options - removed State ID and Passport
+    // options.push("State ID", "Passport");
 
-    // Athletic License for Wrestlers, Boxers, and MMA (replaces Driver License)
+    // Three separate options for Wrestlers, Boxers, and MMA
     if (athleticCheck) {
-      options.unshift("Athletic License");
-      console.log("VerifyID - Added Athletic License for:", roles.filter(r => ["Wrestler", "Boxer", "MMA"].includes(r)));
+      options.unshift("Athletic License", "Wrestling School", "Other");
+      console.log("VerifyID - Added three separate options for:", roles.filter(r => ["Wrestler", "Boxer", "MMA"].includes(r)));
+    } else if (roles.includes("Promoter")) {
+      // Three options for promoters
+      options.unshift("Business License", "Occupancy Permits", "Other");
+      console.log("VerifyID - Added three options for Promoter");
     } else {
-      // Driver License for non-athletic roles
+      // Driver License for other non-athletic roles
       options.unshift("Driver License");
       console.log("VerifyID - Added Driver License for non-athletic roles");
-    }
-
-    // Business license for promoters
-    if (roles.includes("Promoter")) {
-      options.unshift("Business License");
-      console.log("Added Business License for Promoter");
     }
 
     // Remove duplicates
@@ -147,52 +145,58 @@ function VerifyIDContent() {
         {/* ID Options */}
         <div className="space-y-3 mb-8">
           {idOptions.map((option) => (
-            <button
-              key={option}
-              onClick={() => {
-                // All IDs go to chooseverify page
-                router.push(`/chooseverify?idType=${encodeURIComponent(option)}&country=${encodeURIComponent(country)}&roles=${encodeURIComponent(rolesParam)}&name=${encodeURIComponent(name)}`);
-              }}
-              className="w-full flex justify-between items-center px-4 py-4 radius-md bg-input-background hover:bg-surface text-left border border-transparent hover:border-text-secondary transition-colors"
-            >
-              <div className="flex items-center flex-1">
-                {/* Icon based on option type */}
-                <div className="w-8 h-8 bg-button-red opacity-20 radius-md flex items-center justify-center mr-3">
-                  {option === "Driver License" || option === "State ID" ? (
-                    <svg className="w-4 h-4 text-button-red" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2zm0 2v2h16V6H4zm0 4v6h16v-6H4z"/>
-                    </svg>
-                  ) : option === "Passport" ? (
-                    <svg className="w-4 h-4 text-button-red" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                    </svg>
-                  ) : option === "Business License" ? (
-                    <svg className="w-4 h-4 text-button-red" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
-                    </svg>
-                  ) : option === "Athletic License" ? (
-                    <svg className="w-4 h-4 text-button-red" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                    </svg>
-                  ) : (
-                    <svg className="w-4 h-4 text-button-red" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                    </svg>
-                  )}
+            <div key={option}>
+              <button
+                onClick={() => {
+                  console.log("VerifyID - Button clicked:", option);
+                  console.log("VerifyID - Navigating to chooseverify for:", option);
+                  router.push(`/chooseverify?idType=${encodeURIComponent(option)}&country=${encodeURIComponent(country)}&roles=${encodeURIComponent(rolesParam)}&name=${encodeURIComponent(name)}`);
+                }}
+                className="w-full flex justify-between items-center px-4 py-4 radius-md bg-input-background hover:bg-surface text-left border border-transparent hover:border-text-secondary transition-colors"
+              >
+                <div className="flex items-center flex-1">
+                  {/* Icon based on option type */}
+                  <div className="w-8 h-8 bg-button-red opacity-20 radius-md flex items-center justify-center mr-3">
+                    {option === "Driver License" ? (
+                      <svg className="w-4 h-4 text-button-red" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2zm0 2v2h16V6H4zm0 4v6h16v-6H4z"/>
+                      </svg>
+                    ) : option === "Business License" ? (
+                      <svg className="w-4 h-4 text-button-red" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
+                      </svg>
+                    ) : option === "Occupancy Permits" ? (
+                      <svg className="w-4 h-4 text-button-red" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                      </svg>
+                    ) : option === "Athletic License" ? (
+                      <svg className="w-4 h-4 text-button-red" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                      </svg>
+                    ) : option === "Wrestling School" ? (
+                      <svg className="w-4 h-4 text-button-red" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                      </svg>
+                    ) : option === "Other" ? (
+                      <svg className="w-4 h-4 text-button-red" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4 text-button-red" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                      </svg>
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <span className="text-text-primary text-body font-medium">{option}</span>
+                  </div>
                 </div>
-                <div className="flex-1">
-                  <span className="text-text-primary text-body font-medium">{option}</span>
-                  {option === "Athletic License" && (
-                    <p className="text-text-secondary text-caption mt-1">
-                      Required for MMA fighters, boxers, and wrestlers
-                    </p>
-                  )}
-                </div>
-              </div>
-              <svg className="w-5 h-5 text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
+                <svg className="w-5 h-5 text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+
+            </div>
           ))}
         </div>
       </div>

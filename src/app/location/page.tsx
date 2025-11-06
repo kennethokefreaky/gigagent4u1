@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, Suspense, useEffect } from "react";
+import { saveUserLocation, parseLocationData } from "../../utils/locationStorageUtils";
 
 interface LocationData {
   lat: number;
@@ -27,12 +28,44 @@ function LocationPageContent() {
     return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   };
 
-  // Save location to localStorage
-  const saveLocationToStorage = (locationData: LocationData) => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('userLocation', JSON.stringify(locationData));
-    }
-  };
+  // Save location to Supabase
+  const saveLocationToStorage = async (locationData: LocationData) => {
+    try {
+      const { supabase } = await import('@/lib/supabaseClient');
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        console.log('No authenticated user - cannot save location');
+        return;
+      }
+
+        // Parse location data for Supabase
+        const locationName = locationData.city && locationData.state 
+          ? `${locationData.city}, ${locationData.state}`
+          : 'Current Location';
+        
+        const address = locationData.city && locationData.state 
+          ? `${locationData.city}, ${locationData.state}`
+          : undefined;
+
+        const parsedLocationData = parseLocationData(
+          locationName,
+          address,
+          { lat: locationData.lat, lng: locationData.lng }
+        );
+
+        // Save to Supabase
+        const savedLocation = await saveUserLocation(user.id, parsedLocationData);
+        
+        if (savedLocation) {
+          console.log('✅ Location saved to Supabase successfully');
+        } else {
+          console.log('⚠️ Failed to save location to Supabase');
+        }
+      } catch (error) {
+        console.error('❌ Error saving location to Supabase:', error);
+      }
+    };
 
   // Google Geocoding API to get city/state from lat/lng
   const reverseGeocode = async (lat: number, lng: number): Promise<{ city: string; state: string }> => {
@@ -289,8 +322,8 @@ function LocationPageContent() {
         state
       };
       
-      // Save complete location data to localStorage
-      saveLocationToStorage(fullLocationData);
+      // Save complete location data to Supabase
+      await saveLocationToStorage(fullLocationData);
       
       // Navigate to review page with all data
       router.push(`/locationreview?city=${encodeURIComponent(city)}&state=${encodeURIComponent(state)}&lat=${detectedLocation.lat}&lng=${detectedLocation.lng}`);

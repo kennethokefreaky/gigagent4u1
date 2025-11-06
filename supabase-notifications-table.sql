@@ -2,7 +2,7 @@
 CREATE TABLE IF NOT EXISTS notifications (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('first_event', 'new_message', 'location_based', 'event_posted', 'talent_accepted', 'verification_required')),
+  type TEXT NOT NULL CHECK (type IN ('first_event', 'new_message', 'location_based', 'event_posted', 'talent_accepted', 'verification_required', 'offer_received', 'offer_accepted', 'offer_edited', 'breakfast_reminder', 'lunch_reminder', 'dinner_reminder')),
   title TEXT NOT NULL,
   message TEXT NOT NULL,
   button_text TEXT NOT NULL,
